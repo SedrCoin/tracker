@@ -17,6 +17,7 @@ import {
   defaultState,
 } from "../src/logic.js";
 import { createStore } from "../src/storage.js";
+import { chooseNewer, createSyncClient } from "../src/sync.js";
 
 // --- Даты ---
 
@@ -225,4 +226,55 @@ test("importJSON отклоняет мусор", () => {
   const store = createStore(memStorage());
   assert.throws(() => store.importJSON("{not json"));
   assert.throws(() => store.importJSON(JSON.stringify({ foo: 1 })));
+});
+
+// --- Синхронизация ---
+
+test("set штампует meta.updatedAt", () => {
+  const ls = memStorage();
+  const store = createStore(ls);
+  const before = Date.now();
+  store.set(store.get());
+  const meta = store.getMeta();
+  assert.ok(meta.updatedAt >= before);
+});
+
+test("applyRemote заменяет состояние и ставит updatedAt", () => {
+  const store = createStore(memStorage());
+  store.applyRemote({ habits: [], exercises: [], weighIns: [], settings: {}, days: {} }, 777);
+  assert.equal(store.getMeta().updatedAt, 777);
+  assert.deepEqual(store.get().days, {});
+});
+
+test("chooseNewer выбирает источник по updatedAt", () => {
+  assert.equal(chooseNewer(100, 200), "remote"); // сервер новее
+  assert.equal(chooseNewer(300, 200), "local"); // локально новее
+  assert.equal(chooseNewer(200, 200), "local"); // равны — оставляем локальное
+  assert.equal(chooseNewer(0, 0), "local"); // оба пустые
+});
+
+test("createSyncClient.pull дергает /state с токеном", async () => {
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, json: async () => ({ state: { a: 1 }, updatedAt: 5 }) };
+  };
+  const client = createSyncClient({ apiUrl: "https://x/trackerapi/", token: "t" }, fakeFetch);
+  const out = await client.pull();
+  assert.deepEqual(out, { state: { a: 1 }, updatedAt: 5 });
+  assert.equal(calls[0].url, "https://x/trackerapi/state"); // хвостовой слэш срезан
+  assert.equal(calls[0].opts.headers.Authorization, "Bearer t");
+});
+
+test("createSyncClient.push шлёт PUT с телом", async () => {
+  let captured;
+  const fakeFetch = async (url, opts) => {
+    captured = { url, opts };
+    return { ok: true, json: async () => ({ updatedAt: 9 }) };
+  };
+  const client = createSyncClient({ apiUrl: "https://x/trackerapi", token: "t" }, fakeFetch);
+  const out = await client.push({ a: 2 }, 9);
+  assert.deepEqual(out, { updatedAt: 9 });
+  assert.equal(captured.opts.method, "PUT");
+  assert.deepEqual(JSON.parse(captured.opts.body), { state: { a: 2 }, updatedAt: 9 });
 });

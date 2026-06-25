@@ -1,8 +1,75 @@
 import { createStore } from "./storage.js";
 import * as L from "./logic.js";
 import * as Charts from "./charts.js";
+import * as Sync from "./sync.js";
 
 const store = createStore(window.localStorage);
+
+let syncCfg = Sync.loadSyncConfig(window.localStorage);
+let syncStatus = "idle"; // idle | syncing | ok | offline
+
+// Локальная запись + отложенная отправка на сервер.
+function saveState(state) {
+  store.set(state);
+  schedulePush();
+}
+
+function syncStatusLabel() {
+  return (
+    {
+      idle: "не настроено",
+      syncing: "синхронизация…",
+      ok: "синхронизировано",
+      offline: "нет сети",
+    }[syncStatus] || ""
+  );
+}
+function setSyncStatus(s) {
+  syncStatus = s;
+  const el = document.getElementById("sync-status");
+  if (el) el.textContent = syncStatusLabel();
+}
+
+async function pullOnStart() {
+  if (!Sync.isConfigured(syncCfg)) {
+    setSyncStatus("idle");
+    return;
+  }
+  setSyncStatus("syncing");
+  try {
+    const client = Sync.createSyncClient(syncCfg, window.fetch.bind(window));
+    const remote = await client.pull();
+    const localUpdatedAt = store.getMeta().updatedAt;
+    if (remote.state && Sync.chooseNewer(localUpdatedAt, remote.updatedAt) === "remote") {
+      store.applyRemote(remote.state, remote.updatedAt);
+    } else {
+      await pushNow(); // на сервере пусто/старее — заливаем локальное
+    }
+    setSyncStatus("ok");
+    show("today");
+  } catch {
+    setSyncStatus("offline");
+  }
+}
+
+let pushTimer = null;
+function schedulePush() {
+  if (!Sync.isConfigured(syncCfg)) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushNow, 800);
+}
+async function pushNow() {
+  if (!Sync.isConfigured(syncCfg)) return;
+  setSyncStatus("syncing");
+  try {
+    const client = Sync.createSyncClient(syncCfg, window.fetch.bind(window));
+    const { updatedAt } = await client.push(store.get(), store.getMeta().updatedAt);
+    store.applyRemote(store.get(), updatedAt); // выровнять локальный updatedAt по серверному
+    setSyncStatus("ok");
+  } catch {
+    setSyncStatus("offline");
+  }
+}
 
 const screens = {
   today: document.getElementById("screen-today"),
@@ -154,7 +221,7 @@ function renderToday() {
       const st = store.get();
       st.weighIns = st.weighIns.filter((x) => x.date !== today);
       st.weighIns.push({ date: today, weight: val });
-      store.set(st);
+      saveState(st);
       renderToday();
     });
   }
@@ -229,7 +296,7 @@ function wireWorkoutEvents() {
           ? { exerciseId: ex.id, name: ex.name, type: "cardio", value: "" }
           : { exerciseId: ex.id, name: ex.name, type: "reps", sets: [0] }
       );
-      store.set(s);
+      saveState(s);
       renderWorkouts();
     })
   );
@@ -243,7 +310,7 @@ function wireWorkoutEvents() {
     day.workouts.push(
       isCardio ? { name, type: "cardio", value: "" } : { name, type: "reps", sets: [0] }
     );
-    store.set(s);
+    saveState(s);
     renderWorkouts();
   });
 
@@ -256,7 +323,7 @@ function wireWorkoutEvents() {
       let v = (day.workouts[wk].sets[si] || 0) + d;
       if (v < 0) v = 0;
       day.workouts[wk].sets[si] = v;
-      store.set(s);
+      saveState(s);
       document.getElementById(`val-${wk}-${si}`).textContent = v;
       document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
     })
@@ -267,7 +334,7 @@ function wireWorkoutEvents() {
       const s = store.get();
       const sets = getDay(s, currentDay).workouts[+b.dataset.addset].sets;
       sets.push(sets.length ? sets[sets.length - 1] : 0); // копируем прошлый подход
-      store.set(s);
+      saveState(s);
       renderWorkouts();
     })
   );
@@ -276,7 +343,7 @@ function wireWorkoutEvents() {
     inp.addEventListener("change", () => {
       const s = store.get();
       getDay(s, currentDay).workouts[+inp.dataset.wk].value = inp.value;
-      store.set(s);
+      saveState(s);
     })
   );
 
@@ -284,7 +351,7 @@ function wireWorkoutEvents() {
     b.addEventListener("click", () => {
       const s = store.get();
       getDay(s, currentDay).workouts.splice(+b.dataset.delWk, 1);
-      store.set(s);
+      saveState(s);
       renderWorkouts();
     })
   );
@@ -317,7 +384,7 @@ function renderHabits() {
       const st = store.get();
       const d = getDay(st, currentDay);
       d.habits[id] = !d.habits[id];
-      store.set(st);
+      saveState(st);
       // обновление на месте
       btn.classList.toggle("done", !!d.habits[id]);
       const streak = L.habitStreak(st.days, id, currentDay);
@@ -341,7 +408,7 @@ function renderNote() {
   document.getElementById("note-area").addEventListener("change", (e) => {
     const st = store.get();
     getDay(st, currentDay).note = e.target.value;
-    store.set(st);
+    saveState(st);
   });
 }
 
@@ -436,6 +503,11 @@ function renderSettings() {
       <button class="btn ghost" id="add-habit">Добавить привычку</button></div>
     <div class="card"><div class="eyebrow">Замеры веса</div><div id="weigh-list"></div>
       <button class="btn ghost" id="add-weigh">Добавить замер</button></div>
+    <div class="card"><div class="eyebrow">Синхронизация · <span id="sync-status">${syncStatusLabel()}</span></div>
+      <div class="field">Адрес API<input type="url" id="sync-url" value="${esc(syncCfg.apiUrl)}" placeholder="https://домен/trackerapi"></div>
+      <div class="field">Ключ<input type="password" id="sync-token" value="${esc(syncCfg.token)}" placeholder="токен"></div>
+      <button class="btn" id="sync-save">Сохранить и синхронизировать</button>
+      <button class="btn ghost" id="sync-now">Синхронизировать сейчас</button></div>
     <div class="card"><div class="eyebrow">Бэкап</div>
       <button class="btn blue" id="export">Экспорт в файл</button>
       <button class="btn ghost" id="import">Импорт из файла</button>
@@ -454,21 +526,21 @@ function wireSettings() {
     s.settings.challenge.remainingAtAnchor = parseInt(document.getElementById("set-ch-rem").value, 10);
     s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;
     s.settings.weighIn.intervalDays = parseInt(document.getElementById("set-w-int").value, 10);
-    store.set(s);
+    saveState(s);
     alert("Сохранено");
   });
   document.getElementById("reset-alco").addEventListener("click", () => {
     if (!confirm("Обнулить счётчик «без алкоголя» на сегодня?")) return;
     const s = store.get();
     s.settings.noAlcoholStart = today;
-    store.set(s);
+    saveState(s);
     renderSettings();
   });
   document.getElementById("reset-spray").addEventListener("click", () => {
     if (!confirm("Обнулить счётчик «без спреев» на сегодня?")) return;
     const s = store.get();
     s.settings.noSpraysStart = today;
-    store.set(s);
+    saveState(s);
     renderSettings();
   });
 
@@ -479,6 +551,20 @@ function wireSettings() {
   document.getElementById("export").addEventListener("click", exportData);
   document.getElementById("import").addEventListener("click", () => document.getElementById("import-file").click());
   document.getElementById("import-file").addEventListener("change", importData);
+
+  document.getElementById("sync-save").addEventListener("click", async () => {
+    syncCfg = {
+      apiUrl: document.getElementById("sync-url").value.trim(),
+      token: document.getElementById("sync-token").value.trim(),
+    };
+    Sync.saveSyncConfig(window.localStorage, syncCfg);
+    await pullOnStart();
+    renderSettings();
+  });
+  document.getElementById("sync-now").addEventListener("click", async () => {
+    await pushNow();
+    renderSettings();
+  });
 }
 
 function renderEditableList(containerId, key, addBtnId) {
@@ -494,14 +580,14 @@ function renderEditableList(containerId, key, addBtnId) {
     inp.addEventListener("change", () => {
       const st = store.get();
       st[inp.dataset.key][+inp.dataset.i].name = inp.value;
-      store.set(st);
+      saveState(st);
     })
   );
   document.querySelectorAll(`#${containerId} [data-del]`).forEach((b) =>
     b.addEventListener("click", () => {
       const st = store.get();
       st[b.dataset.del].splice(+b.dataset.i, 1);
-      store.set(st);
+      saveState(st);
       renderSettings();
     })
   );
@@ -512,7 +598,7 @@ function renderEditableList(containerId, key, addBtnId) {
     const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + st[key].length;
     if (key === "exercises") st.exercises.push({ id, name, type: "reps", preset: false });
     else st.habits.push({ id, name });
-    store.set(st);
+    saveState(st);
     renderSettings();
   });
 }
@@ -533,21 +619,21 @@ function renderWeighList() {
       const wi = st.weighIns[+inp.dataset.wi];
       if (inp.dataset.f === "date") wi.date = inp.value;
       else wi.weight = parseFloat(inp.value) || 0;
-      store.set(st);
+      saveState(st);
     })
   );
   document.querySelectorAll("#weigh-list [data-del-wi]").forEach((b) =>
     b.addEventListener("click", () => {
       const st = store.get();
       st.weighIns.splice(+b.dataset.delWi, 1);
-      store.set(st);
+      saveState(st);
       renderSettings();
     })
   );
   document.getElementById("add-weigh").addEventListener("click", () => {
     const st = store.get();
     st.weighIns.push({ date: todayISO(), weight: 0 });
-    store.set(st);
+    saveState(st);
     renderSettings();
   });
 }
@@ -581,6 +667,7 @@ function importData(e) {
 
 // ---------- Старт ----------
 show("today");
+pullOnStart();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () =>
