@@ -104,6 +104,17 @@ export function totalWorkouts(days) {
   return Object.values(days).filter((d) => (d.workouts || []).length > 0).length;
 }
 
+// Калории по дням (для графика). Берёт day.nutrition.kcal, пропускает дни без записи.
+export function caloriesPerDay(days) {
+  return Object.keys(days)
+    .sort()
+    .map((date) => {
+      const n = days[date].nutrition;
+      return { date, value: n && n.kcal ? n.kcal : 0 };
+    })
+    .filter((p) => p.value > 0);
+}
+
 // --- Дефолтный стейт и стартовые данные ---
 
 export function defaultState() {

@@ -264,6 +264,15 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
 
 .empty-hint { color: var(--muted); font-size: 14px; font-weight: 600; padding: 6px 0 2px; }
 
+/* ---------- Nutrition ---------- */
+.nutri-kcal { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 700; color: var(--muted); margin-bottom: 12px; }
+.nutri-kcal input { font-size: 24px; font-weight: 800; padding: 13px 14px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.nutri-kcal input:focus { outline: none; border-color: var(--orange); }
+.nutri-macros { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.nutri-macros label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted); margin: 0; justify-content: flex-start; align-items: stretch; }
+.nutri-macros input { font-size: 16px; font-weight: 700; text-align: center; padding: 10px 8px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.nutri-macros input:focus { outline: none; border-color: var(--orange); }
+
 /* ---------- Habits ---------- */
 .habit {
   width: 100%; cursor: pointer;

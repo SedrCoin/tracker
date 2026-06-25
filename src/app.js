@@ -201,6 +201,7 @@ function renderToday() {
     </div>
 
     <div id="today-workouts"></div>
+    <div id="today-nutrition"></div>
     <div id="today-habits"></div>
     <div id="today-note"></div>
   `;
@@ -227,8 +228,40 @@ function renderToday() {
   }
 
   renderWorkouts();
+  renderNutrition();
   renderHabits();
   renderNote();
+}
+
+function renderNutrition() {
+  const s = store.get();
+  const day = getDay(s, currentDay);
+  const n = day.nutrition || { kcal: 0, p: 0, f: 0, c: 0 };
+  document.getElementById("today-nutrition").innerHTML = `
+    <div class="card">
+      <div class="section-head"><div class="title">Питание</div></div>
+      <label class="nutri-kcal">Калории за день
+        <input type="number" inputmode="numeric" id="n-kcal" value="${n.kcal || ""}" placeholder="ккал" /></label>
+      <div class="nutri-macros">
+        <label>Белки<input type="number" inputmode="numeric" id="n-p" value="${n.p || ""}" placeholder="г" /></label>
+        <label>Жиры<input type="number" inputmode="numeric" id="n-f" value="${n.f || ""}" placeholder="г" /></label>
+        <label>Углеводы<input type="number" inputmode="numeric" id="n-c" value="${n.c || ""}" placeholder="г" /></label>
+      </div>
+    </div>`;
+
+  const save = () => {
+    const st = store.get();
+    getDay(st, currentDay).nutrition = {
+      kcal: parseInt(document.getElementById("n-kcal").value, 10) || 0,
+      p: parseInt(document.getElementById("n-p").value, 10) || 0,
+      f: parseInt(document.getElementById("n-f").value, 10) || 0,
+      c: parseInt(document.getElementById("n-c").value, 10) || 0,
+    };
+    saveState(st);
+  };
+  ["n-kcal", "n-p", "n-f", "n-c"].forEach((id) =>
+    document.getElementById(id).addEventListener("change", save)
+  );
 }
 
 function sumSets(sets) {
@@ -455,6 +488,7 @@ function renderStats() {
     <div class="card"><div class="eyebrow">Всего тренировок</div><div class="stat-big">${L.totalWorkouts(s.days)}</div></div>
     ${exBlocks}
     <div class="card"><div class="section-head"><div class="title">Вес</div></div>${Charts.lineChart(weightSeries, "#1cb0f6")}</div>
+    <div class="card"><div class="section-head"><div class="title">Калории</div></div>${Charts.lineChart(L.caloriesPerDay(s.days).slice(-14), "#ff9a00")}</div>
     <div id="habit-cal"></div>
   `;
   renderHabitCalendar();

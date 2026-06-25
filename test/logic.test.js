@@ -14,6 +14,7 @@ import {
   habitStreak,
   repsPerDay,
   totalWorkouts,
+  caloriesPerDay,
   defaultState,
 } from "../src/logic.js";
 import { createStore } from "../src/storage.js";
@@ -145,6 +146,19 @@ test("repsPerDay суммирует подходы по упражнению и 
 
 test("totalWorkouts считает дни, где была хотя бы одна тренировка", () => {
   assert.equal(totalWorkouts(statDays), 2);
+});
+
+test("caloriesPerDay собирает калории по дням и пропускает пустые", () => {
+  const days = {
+    "2026-06-21": { nutrition: { kcal: 2200, p: 150, f: 70, c: 200 } },
+    "2026-06-22": { nutrition: { kcal: 0 } },
+    "2026-06-23": {},
+    "2026-06-24": { nutrition: { kcal: 1900 } },
+  };
+  assert.deepEqual(caloriesPerDay(days), [
+    { date: "2026-06-21", value: 2200 },
+    { date: "2026-06-24", value: 1900 },
+  ]);
 });
 
 // --- Дефолтный стейт ---
