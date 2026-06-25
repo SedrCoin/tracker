@@ -1,0 +1,17 @@
+# server/tracker.service — положить в /etc/systemd/system/, поправить пути и токен
+[Unit]
+Description=Tracker API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/tracker/server
+ExecStart=/usr/bin/node index.js
+Environment=PORT=8787
+Environment=DB_PATH=/opt/tracker/server/data/tracker.sqlite
+Environment=ALLOW_ORIGIN=https://sedrcoin.github.io
+Environment=TRACKER_TOKEN=ЗАМЕНИ_НА_СГЕНЕРИРОВАННЫЙ
+Restart=always
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
