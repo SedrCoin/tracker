@@ -64,10 +64,21 @@ export function lastWeighInValue(weighIns, todayISO) {
 
 // --- Привычки ---
 
-export function habitStreak(days, habitId, todayISO) {
+// Текущая серия. Не обнуляется, если сегодня ещё не отмечено: серия «жива»,
+// пока не пропущен прошедший день. Считаем от сегодня (если отмечено) либо
+// от вчера (если сегодня ещё пусто), затем назад по последовательным дням.
+export function habitStreak(days, habitId, refISO) {
+  const done = (iso) => !!(days[iso] && days[iso].habits && days[iso].habits[habitId]);
+  let start;
+  if (done(refISO)) start = refISO;
+  else {
+    const yesterday = addDays(refISO, -1);
+    if (done(yesterday)) start = yesterday;
+    else return 0;
+  }
   let streak = 0;
-  let cursor = todayISO;
-  while (days[cursor] && days[cursor].habits && days[cursor].habits[habitId]) {
+  let cursor = start;
+  while (done(cursor)) {
     streak += 1;
     cursor = addDays(cursor, -1);
   }
@@ -96,6 +107,8 @@ export function totalWorkouts(days) {
 // --- Дефолтный стейт и стартовые данные ---
 
 export function defaultState() {
+  const SEED = "2026-06-25"; // день первичной настройки — якорь для стартовых серий
+
   const exTurnik = { id: "turnik", name: "Турник", type: "reps", preset: true };
   const exBrusya = { id: "brusya", name: "Брусья", type: "reps", preset: true };
   const habits = [
@@ -104,14 +117,29 @@ export function defaultState() {
     { id: "pushups", name: "10 отжиманий" },
     { id: "meditation", name: "Медитация" },
   ];
-  const mkDay = (turnik, brusya) => ({
-    workouts: [
+
+  const days = {};
+  const ensure = (iso) => (days[iso] || (days[iso] = { workouts: [], habits: {}, note: "" }));
+  const seedStreak = (habitId, count, endISO) => {
+    for (let i = 0; i < count; i++) ensure(addDays(endISO, -i)).habits[habitId] = true;
+  };
+  const addWorkout = (iso, turnik, brusya) => {
+    ensure(iso).workouts = [
       { exerciseId: "turnik", name: "Турник", type: "reps", sets: turnik },
       { exerciseId: "brusya", name: "Брусья", type: "reps", sets: brusya },
-    ],
-    habits: {},
-    note: "",
-  });
+    ];
+  };
+
+  seedStreak("fr", 151, SEED); // включая сегодня
+  seedStreak("chess", 110, SEED); // включая сегодня
+  seedStreak("meditation", 63, addDays(SEED, -1)); // не включая сегодня (ещё не сделано)
+  seedStreak("pushups", 7, SEED); // включая сегодня
+
+  addWorkout("2026-06-21", [6, 4, 4, 2, 4], [5, 4, 4, 5, 6]);
+  addWorkout("2026-06-22", [2, 3, 2, 3, 3], [8, 3, 5, 3, 3]);
+  addWorkout("2026-06-23", [2, 2, 3, 2, 2], [4, 7, 7, 6, 5]);
+  addWorkout("2026-06-24", [3, 5, 6, 4, 5], [4, 7, 8, 6, 6]);
+
   return {
     settings: {
       noAlcoholStart: "2025-09-27",
@@ -122,11 +150,6 @@ export function defaultState() {
     exercises: [exTurnik, exBrusya],
     habits,
     weighIns: [{ date: "2026-06-22", weight: 78.8 }],
-    days: {
-      "2026-06-21": mkDay([6, 4, 4, 2, 4], [5, 4, 4, 5, 6]),
-      "2026-06-22": mkDay([2, 3, 2, 3, 3], [8, 3, 5, 3, 3]),
-      "2026-06-23": mkDay([2, 2, 3, 2, 2], [4, 7, 7, 6, 5]),
-      "2026-06-24": mkDay([3, 5, 6, 4, 5], [4, 7, 8, 6, 6]),
-    },
+    days,
   };
 }

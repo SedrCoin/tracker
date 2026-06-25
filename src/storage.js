@@ -1,6 +1,6 @@
 import { defaultState } from "./logic.js";
 
-const KEY = "tracker.state.v1";
+const KEY = "tracker.state.v2";
 
 function isValidState(s) {
   return (

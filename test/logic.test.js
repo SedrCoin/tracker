@@ -103,8 +103,13 @@ test("стрик считает дни подряд до сегодня вклю
   assert.equal(habitStreak(streakDays, "fr", "2026-06-25"), 3);
 });
 
-test("стрик 0, если сегодня не отмечено", () => {
-  assert.equal(habitStreak(streakDays, "fr", "2026-06-26"), 0);
+test("серия жива, если сегодня ещё не отмечено, но вчера было", () => {
+  // сегодня = 26.06 (ещё не сделано), серия 23–25 = 3 дня, считается через вчера
+  assert.equal(habitStreak(streakDays, "fr", "2026-06-26"), 3);
+});
+
+test("серия 0, если и сегодня, и вчера пусто", () => {
+  assert.equal(habitStreak(streakDays, "fr", "2026-06-27"), 0);
 });
 
 test("стрик прерывается на пропуске", () => {
@@ -158,13 +163,24 @@ test("4 привычки и 2 пресета-упражнения", () => {
   assert.equal(s.exercises.filter((e) => e.preset).length, 2);
 });
 
-test("сид-данные: 4 дня тренировок и вес 78.8", () => {
+test("сид-данные: тренировки за 21–24.06 и вес 78.8", () => {
   const s = defaultState();
-  assert.equal(Object.keys(s.days).length, 4);
   assert.deepEqual(s.days["2026-06-21"].workouts[0].sets, [6, 4, 4, 2, 4]);
   assert.deepEqual(s.days["2026-06-24"].workouts[1].sets, [4, 7, 8, 6, 6]);
+  assert.equal(totalWorkouts(s.days), 4);
   assert.equal(s.weighIns[0].weight, 78.8);
   assert.equal(s.weighIns[0].date, "2026-06-22");
+});
+
+test("сид-данные: стартовые серии привычек", () => {
+  const s = defaultState();
+  const SEED = "2026-06-25";
+  assert.equal(habitStreak(s.days, "fr", SEED), 151);
+  assert.equal(habitStreak(s.days, "chess", SEED), 110);
+  assert.equal(habitStreak(s.days, "meditation", SEED), 63); // сегодня ещё не сделано
+  assert.equal(habitStreak(s.days, "pushups", SEED), 7);
+  // медитация сегодня действительно не отмечена
+  assert.ok(!s.days[SEED].habits.meditation);
 });
 
 // --- Хранилище ---

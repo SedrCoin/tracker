@@ -10,12 +10,39 @@ const screens = {
   settings: document.getElementById("screen-settings"),
 };
 
+// ---------- Иконки (inline SVG, без эмодзи) ----------
+const ICON = {
+  chevL: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>`,
+  chevR: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>`,
+  flame: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-2 4-2 7a2 2 0 104 0c0-1 0-1 .5-2 1.5 2 3.5 4 3.5 7a6 6 0 11-12 0c0-4 4-5 6-12z"/></svg>`,
+  x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+};
+
+// ---------- Даты ----------
 function todayISO() {
   return L.toISO(new Date());
 }
-let currentDay = todayISO(); // выбранный на экране «Сегодня» день
+let currentDay = todayISO();
 
-// Экранирование для вставки в HTML-атрибуты и текст.
+const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const MONTHS_SHORT = ["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
+const WEEKDAYS = ["воскресенье","понедельник","вторник","среда","четверг","пятница","суббота"];
+
+function dayMonth(iso) {
+  const d = L.parseISO(iso);
+  return d.getDate() + " " + MONTHS[d.getMonth()];
+}
+function shortDate(iso) {
+  const d = L.parseISO(iso);
+  return d.getDate() + " " + MONTHS_SHORT[d.getMonth()] + " " + d.getFullYear();
+}
+function weekday(iso) {
+  const w = WEEKDAYS[L.parseISO(iso).getDay()];
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;")
@@ -29,8 +56,7 @@ function getDay(state, iso) {
   return state.days[iso];
 }
 
-// --- Навигация по вкладкам ---
-
+// ---------- Навигация по вкладкам ----------
 function show(tab) {
   for (const [name, el] of Object.entries(screens))
     el.classList.toggle("hidden", name !== tab);
@@ -46,19 +72,16 @@ document
   .querySelectorAll(".tab")
   .forEach((t) => t.addEventListener("click", () => show(t.dataset.tab)));
 
-// --- Экран «Сегодня» ---
-
-function counterCard(title, big, small, color) {
-  return `<div class="card counter ${color}">
-    <div class="counter-title">${title}</div>
-    <div class="counter-big">${big}</div>
-    <div class="counter-small">${small}</div></div>`;
-}
-
+// ---------- Экран «Сегодня» ----------
 function renderToday() {
   const s = store.get();
   const today = todayISO();
-  const label = currentDay === today ? "Сегодня" : currentDay;
+
+  let big, sub;
+  if (currentDay === today) { big = "Сегодня"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
+  else if (currentDay === L.addDays(today, -1)) { big = "Вчера"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
+  else if (currentDay === L.addDays(today, 1)) { big = "Завтра"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
+  else { big = dayMonth(currentDay); sub = weekday(currentDay); }
 
   const ch = s.settings.challenge;
   const rem = L.challengeRemaining(ch, today);
@@ -70,30 +93,46 @@ function renderToday() {
   const isWeigh = L.isWeighInDay(w, today);
   const nextW = L.nextWeighInDate(w, today);
   const lastW = L.lastWeighInValue(s.weighIns, today);
-  const weighPanel = `<div class="card weigh ${isWeigh ? "due" : ""}">
-    <div class="counter-title">⚖️ Взвешивание</div>
-    <div class="counter-big">${lastW != null ? lastW + " кг" : "—"}</div>
-    <div class="counter-small">${isWeigh ? "Сегодня день взвешивания!" : "Следующее: " + nextW}</div>
-    ${
-      isWeigh
-        ? `<div class="weigh-input"><input id="weigh-val" type="number" step="0.1" inputmode="decimal" placeholder="кг" />
-      <button class="btn blue" id="weigh-save">Записать</button></div>`
-        : ""
-    }
-  </div>`;
 
   screens.today.innerHTML = `
     <div class="day-nav">
-      <button class="navbtn" id="day-prev">‹</button>
-      <h1>${label}</h1>
-      <button class="navbtn" id="day-next">›</button>
+      <button class="navbtn" id="day-prev" aria-label="Назад">${ICON.chevL}</button>
+      <div class="label"><div class="big">${big}</div><div class="sub">${sub}</div></div>
+      <button class="navbtn" id="day-next" aria-label="Вперёд">${ICON.chevR}</button>
     </div>
+
     <div class="counters">
-      ${counterCard("🔥 Челлендж", "Осталось " + rem, "День " + dayNo + " из 75", "green")}
-      ${counterCard("🍺 Без алкоголя", noAlco + " дн.", "с " + s.settings.noAlcoholStart, "blue")}
-      ${counterCard("💨 Без спреев", noSpray + " дн.", "с " + s.settings.noSpraysStart, "purple")}
+      <div class="counter hero">
+        <div class="c-label">Челлендж</div>
+        <div class="c-row"><div class="c-big">${rem}</div><div class="c-pill">День ${dayNo} / 75</div></div>
+        <div class="c-sub">осталось дней</div>
+      </div>
+      <div class="counter alco">
+        <div class="c-label">Без алкоголя</div>
+        <div class="c-big">${noAlco}</div>
+        <div class="c-sub">дней · с ${shortDate(s.settings.noAlcoholStart)}</div>
+      </div>
+      <div class="counter spray">
+        <div class="c-label">Без спреев</div>
+        <div class="c-big">${noSpray}</div>
+        <div class="c-sub">дней · с ${shortDate(s.settings.noSpraysStart)}</div>
+      </div>
     </div>
-    ${weighPanel}
+
+    <div class="card">
+      <div class="weigh-head">
+        <div>
+          <div class="eyebrow">Взвешивание</div>
+          <div class="weigh-val">${lastW != null ? lastW + `<span class="unit">кг</span>` : "—"}</div>
+          <div class="weigh-sub">${isWeigh ? "Пора взвеситься" : "Следующее: " + dayMonth(nextW)}</div>
+        </div>
+        ${isWeigh ? `<span class="badge-due">Сегодня</span>` : ""}
+      </div>
+      ${isWeigh ? `<div class="weigh-input">
+        <input id="weigh-val" type="number" step="0.1" inputmode="decimal" placeholder="кг" />
+        <button class="btn blue" id="weigh-save">Записать</button></div>` : ""}
+    </div>
+
     <div id="today-workouts"></div>
     <div id="today-habits"></div>
     <div id="today-note"></div>
@@ -125,36 +164,55 @@ function renderToday() {
   renderNote();
 }
 
+function sumSets(sets) {
+  return (sets || []).reduce((a, b) => a + b, 0);
+}
+
 function renderWorkouts() {
   const s = store.get();
   const day = getDay(s, currentDay);
-  const presets = s.exercises
-    .map((e) => `<button class="chip" data-add-ex="${esc(e.id)}">${esc(e.name)}</button>`)
-    .join("");
-  const list = (day.workouts || [])
+  const chips =
+    s.exercises
+      .map((e) => `<button class="chip" data-add-ex="${esc(e.id)}">${esc(e.name)}</button>`)
+      .join("") + `<button class="chip add" id="add-custom">${ICON.plus} своё</button>`;
+
+  const blocks = (day.workouts || [])
     .map((wk, i) => {
       if (wk.type === "cardio") {
-        return `<div class="wk"><b>${esc(wk.name)}</b>
-        <input class="cardio" data-wk="${i}" value="${esc(wk.value || "")}" placeholder="5 км / 30 мин" />
-        <button class="x" data-del-wk="${i}">✕</button></div>`;
+        return `<div class="ex-block">
+          <div class="ex-head"><span class="ex-name">${esc(wk.name)}</span>
+            <button class="ex-del" data-del-wk="${i}">${ICON.x}</button></div>
+          <input class="cardio-input" data-wk="${i}" value="${esc(wk.value || "")}" placeholder="5 км / 30 мин" />
+        </div>`;
       }
-      const sets = (wk.sets || [])
+      const rows = (wk.sets || [])
         .map(
-          (r, si) =>
-            `<input class="set" type="number" inputmode="numeric" data-wk="${i}" data-set="${si}" value="${r}" />`
+          (r, si) => `<div class="set-row">
+            <span class="set-idx">Подход ${si + 1}</span>
+            <div class="stepper">
+              <button class="step minus" data-wk="${i}" data-set="${si}" data-d="-1">−</button>
+              <span class="step-val" id="val-${i}-${si}">${r}</span>
+              <button class="step plus" data-wk="${i}" data-set="${si}" data-d="1">+</button>
+            </div></div>`
         )
         .join("");
-      return `<div class="wk"><b>${esc(wk.name)}</b>
-      <div class="sets">${sets}<button class="set-add" data-addset="${i}">＋</button></div>
-      <button class="x" data-del-wk="${i}">✕</button></div>`;
+      return `<div class="ex-block">
+        <div class="ex-head"><span class="ex-name">${esc(wk.name)}</span>
+          <button class="ex-del" data-del-wk="${i}">${ICON.x}</button></div>
+        <div class="set-rows">${rows}</div>
+        <button class="add-set" data-addset="${i}">Добавить подход</button>
+        <div class="ex-total">Всего: <b id="total-${i}">${sumSets(wk.sets)}</b></div>
+      </div>`;
     })
     .join("");
 
+  const body = blocks || `<div class="empty-hint">Нажми упражнение выше, чтобы записать подходы.</div>`;
+
   document.getElementById("today-workouts").innerHTML = `
     <div class="card">
-      <div class="section-title">🏋️ Тренировка</div>
-      <div class="chips">${presets}<button class="chip ghost" id="add-custom">＋ своё</button></div>
-      <div class="wk-list">${list}</div>
+      <div class="section-head"><div class="title">Тренировка</div></div>
+      <div class="chips">${chips}</div>
+      ${body}
     </div>`;
 
   wireWorkoutEvents();
@@ -179,42 +237,46 @@ function wireWorkoutEvents() {
   document.getElementById("add-custom").addEventListener("click", () => {
     const name = prompt("Название упражнения?");
     if (!name) return;
-    const isCardio = confirm("Это кардио (бег и т.п.)? OK — да, Отмена — подходы×повторы");
+    const isCardio = confirm("Это кардио (бег и т.п.)?  OK — да,  Отмена — подходы.");
     const s = store.get();
     const day = getDay(s, currentDay);
     day.workouts.push(
-      isCardio
-        ? { name, type: "cardio", value: "" }
-        : { name, type: "reps", sets: [0] }
+      isCardio ? { name, type: "cardio", value: "" } : { name, type: "reps", sets: [0] }
     );
     store.set(s);
     renderWorkouts();
   });
 
-  document.querySelectorAll("input.set").forEach((inp) =>
-    inp.addEventListener("change", () => {
+  // степпер — обновление на месте, без перерисовки
+  document.querySelectorAll(".step").forEach((b) =>
+    b.addEventListener("click", () => {
+      const wk = +b.dataset.wk, si = +b.dataset.set, d = +b.dataset.d;
       const s = store.get();
       const day = getDay(s, currentDay);
-      day.workouts[+inp.dataset.wk].sets[+inp.dataset.set] =
-        parseInt(inp.value, 10) || 0;
+      let v = (day.workouts[wk].sets[si] || 0) + d;
+      if (v < 0) v = 0;
+      day.workouts[wk].sets[si] = v;
       store.set(s);
-    })
-  );
-
-  document.querySelectorAll("input.cardio").forEach((inp) =>
-    inp.addEventListener("change", () => {
-      const s = store.get();
-      getDay(s, currentDay).workouts[+inp.dataset.wk].value = inp.value;
-      store.set(s);
+      document.getElementById(`val-${wk}-${si}`).textContent = v;
+      document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
     })
   );
 
   document.querySelectorAll("[data-addset]").forEach((b) =>
     b.addEventListener("click", () => {
       const s = store.get();
-      getDay(s, currentDay).workouts[+b.dataset.addset].sets.push(0);
+      const sets = getDay(s, currentDay).workouts[+b.dataset.addset].sets;
+      sets.push(sets.length ? sets[sets.length - 1] : 0); // копируем прошлый подход
       store.set(s);
       renderWorkouts();
+    })
+  );
+
+  document.querySelectorAll("input.cardio-input").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const s = store.get();
+      getDay(s, currentDay).workouts[+inp.dataset.wk].value = inp.value;
+      store.set(s);
     })
   );
 
@@ -231,28 +293,39 @@ function wireWorkoutEvents() {
 function renderHabits() {
   const s = store.get();
   const day = getDay(s, currentDay);
-  const today = todayISO();
   const items = s.habits
     .map((h) => {
       const done = !!(day.habits && day.habits[h.id]);
       const streak = L.habitStreak(s.days, h.id, currentDay);
       return `<button class="habit ${done ? "done" : ""}" data-habit="${esc(h.id)}">
-      <span>${done ? "✅" : "⬜️"} ${esc(h.name)}</span>
-      <span class="streak">${streak > 0 ? "🔥 " + streak : ""}</span></button>`;
+        <span class="check">${ICON.check}</span>
+        <span class="h-name">${esc(h.name)}</span>
+        <span class="streak ${streak > 0 ? "" : "hidden-streak"}" id="streak-${esc(h.id)}">${ICON.flame}${streak}</span>
+      </button>`;
     })
     .join("");
-  document.getElementById("today-habits").innerHTML =
-    `<div class="card"><div class="section-title">✨ Привычки</div>${items}</div>`;
+  document.getElementById("today-habits").innerHTML = `
+    <div class="card">
+      <div class="section-head"><div class="title">Привычки</div></div>
+      ${items}
+    </div>`;
 
-  document.querySelectorAll("[data-habit]").forEach((b) =>
-    b.addEventListener("click", () => {
+  const today = todayISO();
+  document.querySelectorAll("[data-habit]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.habit;
       const st = store.get();
       const d = getDay(st, currentDay);
-      d.habits[b.dataset.habit] = !d.habits[b.dataset.habit];
+      d.habits[id] = !d.habits[id];
       store.set(st);
-      const allDone = st.habits.length > 0 && st.habits.every((h) => d.habits[h.id]);
-      renderHabits();
-      if (allDone && currentDay === today) celebrate();
+      // обновление на месте
+      btn.classList.toggle("done", !!d.habits[id]);
+      const streak = L.habitStreak(st.days, id, currentDay);
+      const pill = document.getElementById("streak-" + id);
+      pill.classList.toggle("hidden-streak", streak <= 0);
+      pill.innerHTML = ICON.flame + streak;
+      if (currentDay === today && st.habits.length && st.habits.every((h) => d.habits[h.id]))
+        celebrate();
     })
   );
 }
@@ -260,9 +333,11 @@ function renderHabits() {
 function renderNote() {
   const s = store.get();
   const day = getDay(s, currentDay);
-  document.getElementById("today-note").innerHTML =
-    `<div class="card"><div class="section-title">📝 Заметка</div>
-     <textarea id="note-area" rows="3" placeholder="как прошёл день…">${esc(day.note || "")}</textarea></div>`;
+  document.getElementById("today-note").innerHTML = `
+    <div class="card">
+      <div class="section-head"><div class="title">Заметка</div></div>
+      <textarea id="note-area" rows="3" placeholder="как прошёл день…">${esc(day.note || "")}</textarea>
+    </div>`;
   document.getElementById("note-area").addEventListener("change", (e) => {
     const st = store.get();
     getDay(st, currentDay).note = e.target.value;
@@ -273,20 +348,19 @@ function renderNote() {
 function celebrate() {
   const layer = document.createElement("div");
   layer.className = "confetti";
-  const colors = ["#58cc02", "#1cb0f6", "#ff9600", "#ce82ff", "#ff4b4b"];
-  for (let i = 0; i < 30; i++) {
+  const colors = ["#58cc02", "#1cb0f6", "#ff9a00", "#a560f0", "#ff4b4b"];
+  for (let i = 0; i < 36; i++) {
     const p = document.createElement("i");
-    p.style.left = (i / 30) * 100 + "%";
+    p.style.left = (i / 36) * 100 + "%";
     p.style.background = colors[i % colors.length];
-    p.style.animationDelay = (i % 10) * 0.05 + "s";
+    p.style.animationDelay = (i % 12) * 0.04 + "s";
     layer.appendChild(p);
   }
   document.body.appendChild(layer);
-  setTimeout(() => layer.remove(), 1600);
+  setTimeout(() => layer.remove(), 1700);
 }
 
-// --- Экран «Статистика» ---
-
+// ---------- Экран «Статистика» ----------
 function renderStats() {
   const s = store.get();
   const exNames = [
@@ -298,9 +372,10 @@ function renderStats() {
   ];
   const exBlocks = exNames
     .map((name) => {
-      const series = L.repsPerDay(s.days, name);
-      return `<div class="card"><div class="section-title">${esc(name)} — повторов за день</div>
-      ${Charts.barChart(series, "#58cc02")}</div>`;
+      const series = L.repsPerDay(s.days, name).slice(-10); // последние 10 тренировок
+      return `<div class="card">
+        <div class="section-head"><div class="title">${esc(name)}</div></div>
+        ${Charts.barChart(series, "#58cc02")}</div>`;
     })
     .join("");
 
@@ -310,11 +385,9 @@ function renderStats() {
 
   screens.stats.innerHTML = `
     <h1>Статистика</h1>
-    <div class="card"><div class="section-title">Всего тренировок</div>
-      <div class="counter-big" style="color:var(--green)">${L.totalWorkouts(s.days)}</div></div>
+    <div class="card"><div class="eyebrow">Всего тренировок</div><div class="stat-big">${L.totalWorkouts(s.days)}</div></div>
     ${exBlocks}
-    <div class="card"><div class="section-title">⚖️ Вес</div>
-      ${Charts.lineChart(weightSeries, "#1cb0f6")}</div>
+    <div class="card"><div class="section-head"><div class="title">Вес</div></div>${Charts.lineChart(weightSeries, "#1cb0f6")}</div>
     <div id="habit-cal"></div>
   `;
   renderHabitCalendar();
@@ -324,7 +397,7 @@ function renderHabitCalendar() {
   const s = store.get();
   const today = todayISO();
   const days = [];
-  for (let i = 13; i >= 0; i--) days.push(L.addDays(today, -i)); // последние 14 дней
+  for (let i = 13; i >= 0; i--) days.push(L.addDays(today, -i));
   const rows = s.habits
     .map((h) => {
       const cells = days
@@ -336,37 +409,34 @@ function renderHabitCalendar() {
       return `<div class="cal-row"><span class="cal-name">${esc(h.name)}</span><div class="cal-cells">${cells}</div></div>`;
     })
     .join("");
-  document.getElementById("habit-cal").innerHTML =
-    `<div class="card"><div class="section-title">Привычки за 14 дней</div>${rows}</div>`;
+  document.getElementById("habit-cal").innerHTML = `
+    <div class="card"><div class="eyebrow">Привычки · 14 дней</div>${rows}</div>`;
 }
 
-// --- Экран «Настройки» ---
-
+// ---------- Экран «Настройки» ----------
 function renderSettings() {
   const s = store.get();
   screens.settings.innerHTML = `
     <h1>Настройки</h1>
-    <div class="card"><div class="section-title">Счётчики</div>
-      <label>Без алкоголя с<input type="date" id="set-alco" value="${s.settings.noAlcoholStart}"></label>
-      <label>Без спреев с<input type="date" id="set-spray" value="${s.settings.noSpraysStart}"></label>
-      <label>Челлендж: якорь<input type="date" id="set-ch-anchor" value="${s.settings.challenge.anchorDate}"></label>
-      <label>Челлендж: остаток на якоре<input type="number" id="set-ch-rem" value="${s.settings.challenge.remainingAtAnchor}"></label>
-      <label>Взвешивание: якорь<input type="date" id="set-w-anchor" value="${s.settings.weighIn.anchorDate}"></label>
-      <label>Взвешивание: интервал (дней)<input type="number" id="set-w-int" value="${s.settings.weighIn.intervalDays}"></label>
+    <div class="card">
+      <div class="eyebrow">Счётчики</div>
+      <div class="field">Без алкоголя с<input type="date" id="set-alco" value="${s.settings.noAlcoholStart}"></div>
+      <div class="field">Без спреев с<input type="date" id="set-spray" value="${s.settings.noSpraysStart}"></div>
+      <div class="field">Челлендж: якорь<input type="date" id="set-ch-anchor" value="${s.settings.challenge.anchorDate}"></div>
+      <div class="field">Челлендж: остаток на якоре<input type="number" id="set-ch-rem" value="${s.settings.challenge.remainingAtAnchor}"></div>
+      <div class="field">Взвешивание: якорь<input type="date" id="set-w-anchor" value="${s.settings.weighIn.anchorDate}"></div>
+      <div class="field">Взвешивание: интервал, дней<input type="number" id="set-w-int" value="${s.settings.weighIn.intervalDays}"></div>
       <button class="btn" id="save-settings">Сохранить</button>
-      <button class="btn ghost" id="reset-alco">Сброс «без алко» на сегодня</button>
-      <button class="btn ghost" id="reset-spray">Сброс «без спреев» на сегодня</button>
+      <button class="btn ghost" id="reset-alco">Сбросить «без алкоголя» на сегодня</button>
+      <button class="btn ghost" id="reset-spray">Сбросить «без спреев» на сегодня</button>
     </div>
-    <div class="card"><div class="section-title">Упражнения</div>
-      <div id="ex-list"></div>
-      <button class="btn ghost" id="add-ex-preset">＋ упражнение</button></div>
-    <div class="card"><div class="section-title">Привычки</div>
-      <div id="habit-list"></div>
-      <button class="btn ghost" id="add-habit">＋ привычка</button></div>
-    <div class="card"><div class="section-title">⚖️ Замеры веса</div>
-      <div id="weigh-list"></div>
-      <button class="btn ghost" id="add-weigh">＋ замер</button></div>
-    <div class="card"><div class="section-title">Бэкап</div>
+    <div class="card"><div class="eyebrow">Упражнения</div><div id="ex-list"></div>
+      <button class="btn ghost" id="add-ex-preset">Добавить упражнение</button></div>
+    <div class="card"><div class="eyebrow">Привычки</div><div id="habit-list"></div>
+      <button class="btn ghost" id="add-habit">Добавить привычку</button></div>
+    <div class="card"><div class="eyebrow">Замеры веса</div><div id="weigh-list"></div>
+      <button class="btn ghost" id="add-weigh">Добавить замер</button></div>
+    <div class="card"><div class="eyebrow">Бэкап</div>
       <button class="btn blue" id="export">Экспорт в файл</button>
       <button class="btn ghost" id="import">Импорт из файла</button>
       <input type="file" id="import-file" accept="application/json" hidden></div>
@@ -381,15 +451,9 @@ function wireSettings() {
     s.settings.noAlcoholStart = document.getElementById("set-alco").value;
     s.settings.noSpraysStart = document.getElementById("set-spray").value;
     s.settings.challenge.anchorDate = document.getElementById("set-ch-anchor").value;
-    s.settings.challenge.remainingAtAnchor = parseInt(
-      document.getElementById("set-ch-rem").value,
-      10
-    );
+    s.settings.challenge.remainingAtAnchor = parseInt(document.getElementById("set-ch-rem").value, 10);
     s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;
-    s.settings.weighIn.intervalDays = parseInt(
-      document.getElementById("set-w-int").value,
-      10
-    );
+    s.settings.weighIn.intervalDays = parseInt(document.getElementById("set-w-int").value, 10);
     store.set(s);
     alert("Сохранено");
   });
@@ -413,9 +477,7 @@ function wireSettings() {
   renderWeighList();
 
   document.getElementById("export").addEventListener("click", exportData);
-  document
-    .getElementById("import")
-    .addEventListener("click", () => document.getElementById("import-file").click());
+  document.getElementById("import").addEventListener("click", () => document.getElementById("import-file").click());
   document.getElementById("import-file").addEventListener("change", importData);
 }
 
@@ -423,9 +485,9 @@ function renderEditableList(containerId, key, addBtnId) {
   const s = store.get();
   document.getElementById(containerId).innerHTML = s[key]
     .map(
-      (item, i) =>
-        `<div class="edit-row"><input data-key="${key}" data-i="${i}" value="${esc(item.name)}" />
-     <button class="x" data-del="${key}" data-i="${i}">✕</button></div>`
+      (item, i) => `<div class="edit-row">
+        <input data-key="${key}" data-i="${i}" value="${esc(item.name)}" />
+        <button class="icon-x" data-del="${key}" data-i="${i}">${ICON.x}</button></div>`
     )
     .join("");
   document.querySelectorAll(`#${containerId} input`).forEach((inp) =>
@@ -448,8 +510,7 @@ function renderEditableList(containerId, key, addBtnId) {
     if (!name) return;
     const st = store.get();
     const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + st[key].length;
-    if (key === "exercises")
-      st.exercises.push({ id, name, type: "reps", preset: false });
+    if (key === "exercises") st.exercises.push({ id, name, type: "reps", preset: false });
     else st.habits.push({ id, name });
     store.set(st);
     renderSettings();
@@ -460,11 +521,10 @@ function renderWeighList() {
   const s = store.get();
   document.getElementById("weigh-list").innerHTML = s.weighIns
     .map(
-      (wi, i) =>
-        `<div class="edit-row">
-       <input type="date" data-wi="${i}" data-f="date" value="${wi.date}" />
-       <input type="number" step="0.1" inputmode="decimal" data-wi="${i}" data-f="weight" value="${wi.weight}" />
-       <button class="x" data-del-wi="${i}">✕</button></div>`
+      (wi, i) => `<div class="edit-row">
+        <input type="date" data-wi="${i}" data-f="date" value="${wi.date}" />
+        <input type="number" step="0.1" inputmode="decimal" data-wi="${i}" data-f="weight" value="${wi.weight}" />
+        <button class="icon-x" data-del-wi="${i}">${ICON.x}</button></div>`
     )
     .join("");
   document.querySelectorAll("#weigh-list input").forEach((inp) =>
@@ -519,8 +579,7 @@ function importData(e) {
   reader.readAsText(file);
 }
 
-// --- Старт ---
-
+// ---------- Старт ----------
 show("today");
 
 if ("serviceWorker" in navigator) {
