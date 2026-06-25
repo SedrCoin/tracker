@@ -363,6 +363,9 @@ function renderSettings() {
     <div class="card"><div class="section-title">Привычки</div>
       <div id="habit-list"></div>
       <button class="btn ghost" id="add-habit">＋ привычка</button></div>
+    <div class="card"><div class="section-title">⚖️ Замеры веса</div>
+      <div id="weigh-list"></div>
+      <button class="btn ghost" id="add-weigh">＋ замер</button></div>
     <div class="card"><div class="section-title">Бэкап</div>
       <button class="btn blue" id="export">Экспорт в файл</button>
       <button class="btn ghost" id="import">Импорт из файла</button>
@@ -407,6 +410,7 @@ function wireSettings() {
 
   renderEditableList("ex-list", "exercises", "add-ex-preset");
   renderEditableList("habit-list", "habits", "add-habit");
+  renderWeighList();
 
   document.getElementById("export").addEventListener("click", exportData);
   document
@@ -447,6 +451,42 @@ function renderEditableList(containerId, key, addBtnId) {
     if (key === "exercises")
       st.exercises.push({ id, name, type: "reps", preset: false });
     else st.habits.push({ id, name });
+    store.set(st);
+    renderSettings();
+  });
+}
+
+function renderWeighList() {
+  const s = store.get();
+  document.getElementById("weigh-list").innerHTML = s.weighIns
+    .map(
+      (wi, i) =>
+        `<div class="edit-row">
+       <input type="date" data-wi="${i}" data-f="date" value="${wi.date}" />
+       <input type="number" step="0.1" inputmode="decimal" data-wi="${i}" data-f="weight" value="${wi.weight}" />
+       <button class="x" data-del-wi="${i}">✕</button></div>`
+    )
+    .join("");
+  document.querySelectorAll("#weigh-list input").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const st = store.get();
+      const wi = st.weighIns[+inp.dataset.wi];
+      if (inp.dataset.f === "date") wi.date = inp.value;
+      else wi.weight = parseFloat(inp.value) || 0;
+      store.set(st);
+    })
+  );
+  document.querySelectorAll("#weigh-list [data-del-wi]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const st = store.get();
+      st.weighIns.splice(+b.dataset.delWi, 1);
+      store.set(st);
+      renderSettings();
+    })
+  );
+  document.getElementById("add-weigh").addEventListener("click", () => {
+    const st = store.get();
+    st.weighIns.push({ date: todayISO(), weight: 0 });
     store.set(st);
     renderSettings();
   });
