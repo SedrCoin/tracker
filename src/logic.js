@@ -32,8 +32,11 @@ export function challengeRemaining(challenge, todayISO) {
   return Math.max(0, challenge.remainingAtAnchor - elapsed);
 }
 
+// Номер дня челленджа считается от startDate (день 1). Fallback на anchorDate
+// для старых данных без startDate.
 export function challengeDayNumber(challenge, todayISO) {
-  return challenge.remainingAtAnchor - challengeRemaining(challenge, todayISO) + 1;
+  const start = challenge.startDate || challenge.anchorDate;
+  return daysSince(start, todayISO) + 1;
 }
 
 export function daysSince(startISO, todayISO) {
@@ -155,7 +158,7 @@ export function defaultState() {
     settings: {
       noAlcoholStart: "2025-09-27",
       noSpraysStart: "2026-05-02",
-      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75 },
+      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21" },
       weighIn: { anchorDate: "2026-06-22", intervalDays: 14 },
     },
     exercises: [exTurnik, exBrusya],

@@ -523,7 +523,8 @@ function renderSettings() {
       <div class="eyebrow">Счётчики</div>
       <div class="field">Без алкоголя с<input type="date" id="set-alco" value="${s.settings.noAlcoholStart}"></div>
       <div class="field">Без спреев с<input type="date" id="set-spray" value="${s.settings.noSpraysStart}"></div>
-      <div class="field">Челлендж: якорь<input type="date" id="set-ch-anchor" value="${s.settings.challenge.anchorDate}"></div>
+      <div class="field">Челлендж: старт (день 1)<input type="date" id="set-ch-start" value="${s.settings.challenge.startDate}"></div>
+      <div class="field">Челлендж: якорь отсчёта<input type="date" id="set-ch-anchor" value="${s.settings.challenge.anchorDate}"></div>
       <div class="field">Челлендж: остаток на якоре<input type="number" id="set-ch-rem" value="${s.settings.challenge.remainingAtAnchor}"></div>
       <div class="field">Взвешивание: якорь<input type="date" id="set-w-anchor" value="${s.settings.weighIn.anchorDate}"></div>
       <div class="field">Взвешивание: интервал, дней<input type="number" id="set-w-int" value="${s.settings.weighIn.intervalDays}"></div>
@@ -556,6 +557,7 @@ function wireSettings() {
     const s = store.get();
     s.settings.noAlcoholStart = document.getElementById("set-alco").value;
     s.settings.noSpraysStart = document.getElementById("set-spray").value;
+    s.settings.challenge.startDate = document.getElementById("set-ch-start").value;
     s.settings.challenge.anchorDate = document.getElementById("set-ch-anchor").value;
     s.settings.challenge.remainingAtAnchor = parseInt(document.getElementById("set-ch-rem").value, 10);
     s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;

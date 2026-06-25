@@ -55,7 +55,13 @@ test("остаток не уходит ниже 0", () => {
   assert.equal(challengeRemaining(challenge, "2026-12-31"), 0);
 });
 
-test("номер дня челленджа = 75 - остаток + 1", () => {
+test("номер дня челленджа считается от startDate (день 1)", () => {
+  const ch = { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21" };
+  assert.equal(challengeDayNumber(ch, "2026-06-21"), 1);
+  assert.equal(challengeDayNumber(ch, "2026-06-25"), 5);
+});
+
+test("номер дня челленджа: fallback на anchorDate без startDate", () => {
   assert.equal(challengeDayNumber(challenge, "2026-06-22"), 1);
   assert.equal(challengeDayNumber(challenge, "2026-06-25"), 4);
 });
@@ -169,6 +175,7 @@ test("дефолтный стейт содержит настройки счёт
   assert.equal(s.settings.noSpraysStart, "2026-05-02");
   assert.equal(s.settings.challenge.anchorDate, "2026-06-22");
   assert.equal(s.settings.challenge.remainingAtAnchor, 75);
+  assert.equal(s.settings.challenge.startDate, "2026-06-21");
   assert.equal(s.settings.weighIn.intervalDays, 14);
 });
 
@@ -240,6 +247,15 @@ test("importJSON отклоняет мусор", () => {
   const store = createStore(memStorage());
   assert.throws(() => store.importJSON("{not json"));
   assert.throws(() => store.importJSON(JSON.stringify({ foo: 1 })));
+});
+
+test("get() бэкфиллит challenge.startDate в старом состоянии", () => {
+  const ls = memStorage();
+  const legacy = defaultState();
+  delete legacy.settings.challenge.startDate;
+  ls.setItem("tracker.state.v2", JSON.stringify(legacy));
+  const store = createStore(ls);
+  assert.equal(store.get().settings.challenge.startDate, "2026-06-21");
 });
 
 // --- Синхронизация ---

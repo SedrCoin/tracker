@@ -30,7 +30,13 @@ export function createStore(ls) {
       ls.setItem(KEY, JSON.stringify(def));
       return def;
     }
-    return JSON.parse(raw);
+    const s = JSON.parse(raw);
+    // Миграция: старт челленджа (день 1) для состояний, созданных до его появления.
+    if (s.settings && s.settings.challenge && !s.settings.challenge.startDate) {
+      s.settings.challenge.startDate = "2026-06-21";
+      ls.setItem(KEY, JSON.stringify(s));
+    }
+    return s;
   }
   function set(state) {
     ls.setItem(KEY, JSON.stringify(state));
