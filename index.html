@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Трекер" />
+  <meta name="theme-color" content="#58cc02" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Трекер</title>
+</head>
+<body>
+  <main id="screen-today" class="screen"></main>
+  <main id="screen-stats" class="screen hidden"></main>
+  <main id="screen-settings" class="screen hidden"></main>
+  <nav id="tabbar">
+    <button data-tab="today" class="tab active">📅<span>Сегодня</span></button>
+    <button data-tab="stats" class="tab">📊<span>Статистика</span></button>
+    <button data-tab="settings" class="tab">⚙️<span>Настройки</span></button>
+  </nav>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#58cc02"/>
+  <g fill="#ffffff">
+    <!-- штанга: гриф -->
+    <rect x="120" y="236" width="272" height="40" rx="20"/>
+    <!-- левые блины -->
+    <rect x="96" y="196" width="40" height="120" rx="16"/>
+    <rect x="60" y="216" width="34" height="80" rx="14"/>
+    <!-- правые блины -->
+    <rect x="376" y="196" width="40" height="120" rx="16"/>
+    <rect x="418" y="216" width="34" height="80" rx="14"/>
+  </g>
+  <!-- галочка-стрик -->
+  <path d="M196 360 l44 44 l86 -104" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
