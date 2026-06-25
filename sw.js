@@ -1,4 +1,4 @@
-const CACHE = "tracker-v2";
+const CACHE = "tracker-v3";
 const ASSETS = [
   ".",
   "index.html",
@@ -7,6 +7,7 @@ const ASSETS = [
   "src/logic.js",
   "src/storage.js",
   "src/charts.js",
+  "src/sync.js",
   "manifest.json",
   "icons/icon-192.png",
   "icons/icon-512.png",
