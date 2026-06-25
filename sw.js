@@ -1,4 +1,4 @@
-const CACHE = "tracker-v3";
+const CACHE = "tracker-v4";
 const ASSETS = [
   ".",
   "index.html",
@@ -33,6 +33,20 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+// Network-first для своих файлов: когда есть сеть — всегда свежее (без залипания
+// на старой версии), кэш обновляется попутно и служит запасным для офлайна.
+// Чужие origin (наш API на blitsplus.ru и т.п.) не трогаем — пропускаем как есть.
 self.addEventListener("fetch", (e) => {
-  e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
+  const req = e.request;
+  const url = new URL(req.url);
+  if (req.method !== "GET" || url.origin !== self.location.origin) return;
+  e.respondWith(
+    fetch(req)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(req))
+  );
 });
