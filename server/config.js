@@ -4,7 +4,7 @@ export function loadConfig(env = process.env) {
   return {
     token,
     port: Number(env.PORT || 8787),
-    dbPath: env.DB_PATH || "./data/tracker.sqlite",
+    dbPath: env.DB_PATH || "./data/tracker.json",
     allowOrigin: env.ALLOW_ORIGIN || "https://sedrcoin.github.io",
     maxBody: Number(env.MAX_BODY || 2_000_000),
   };

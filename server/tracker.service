@@ -5,9 +5,10 @@ After=network.target
 
 [Service]
 WorkingDirectory=/opt/tracker/server
+# ExecStart: путь к node взять из `which node` на сервере (может быть /usr/bin/node)
 ExecStart=/usr/bin/node index.js
 Environment=PORT=8787
-Environment=DB_PATH=/opt/tracker/server/data/tracker.sqlite
+Environment=DB_PATH=/opt/tracker/server/data/tracker.json
 Environment=ALLOW_ORIGIN=https://sedrcoin.github.io
 Environment=TRACKER_TOKEN=ЗАМЕНИ_НА_СГЕНЕРИРОВАННЫЙ
 Restart=always

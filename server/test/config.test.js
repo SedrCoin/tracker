@@ -10,7 +10,7 @@ test("loadConfig подставляет дефолты", () => {
   const c = loadConfig({ TRACKER_TOKEN: "x" });
   assert.equal(c.token, "x");
   assert.equal(c.port, 8787);
-  assert.equal(c.dbPath, "./data/tracker.sqlite");
+  assert.equal(c.dbPath, "./data/tracker.json");
   assert.equal(c.allowOrigin, "https://sedrcoin.github.io");
   assert.equal(c.maxBody, 2_000_000);
 });

@@ -1,35 +1,42 @@
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
+// Хранилище состояния — простой JSON-файл с атомарной записью (tmp + rename).
+// Без внешних зависимостей и без node:sqlite, поэтому работает на Node ≥ 18.
+// path === ":memory:" — состояние в памяти (для тестов).
 export function openDb(path) {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec(`CREATE TABLE IF NOT EXISTS state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  );`);
+  const isMem = path === ":memory:";
+  let mem = null;
+  if (!isMem) mkdirSync(dirname(path), { recursive: true });
 
-  const selectStmt = db.prepare("SELECT json, updated_at AS updatedAt FROM state WHERE id = 1");
-  const upsertStmt = db.prepare(
-    `INSERT INTO state (id, json, updated_at) VALUES (1, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`
-  );
+  function read() {
+    if (isMem) return mem;
+    if (!existsSync(path)) return null;
+    try {
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return null; // битый файл — считаем пустым, не падаем
+    }
+  }
+  function write(obj) {
+    if (isMem) {
+      mem = obj;
+      return;
+    }
+    const tmp = path + ".tmp";
+    writeFileSync(tmp, JSON.stringify(obj));
+    renameSync(tmp, path); // атомарная замена — без частично записанного файла
+  }
 
   return {
     getState() {
-      const row = selectStmt.get();
-      return row
-        ? { state: JSON.parse(row.json), updatedAt: row.updatedAt }
-        : { state: null, updatedAt: 0 };
+      const row = read();
+      return row ? { state: row.state, updatedAt: row.updatedAt } : { state: null, updatedAt: 0 };
     },
     setState(stateObj, updatedAt) {
-      upsertStmt.run(JSON.stringify(stateObj), updatedAt);
+      write({ state: stateObj, updatedAt });
       return updatedAt;
     },
-    close() {
-      db.close();
-    },
+    close() {},
   };
 }

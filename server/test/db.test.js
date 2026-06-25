@@ -7,7 +7,7 @@ import { rmSync } from "node:fs";
 import { openDb } from "../db.js";
 
 function tmpDbPath() {
-  return join(tmpdir(), `tracker-test-${randomUUID()}.sqlite`);
+  return join(tmpdir(), `tracker-test-${randomUUID()}.json`);
 }
 
 test("пустая база отдаёт null-состояние", () => {
