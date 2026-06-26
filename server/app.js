@@ -26,7 +26,7 @@ function readBody(req, maxBody) {
   });
 }
 
-export function createApp({ db, token, allowOrigin, maxBody, allow = () => true }) {
+export function createApp({ db, token, allowOrigin, maxBody, allow = () => true, fatsecret = null }) {
   const cors = {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -53,8 +53,50 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true 
       return;
     }
 
+    if (path === "/foods/search" || path === "/foods/get") {
+      await handleFoods(req, res, { token, fatsecret, cors, allow, path, url });
+      return;
+    }
+
     sendJson(res, 404, { error: "not found" }, cors);
   };
+}
+
+async function handleFoods(req, res, { token, fatsecret, cors, allow, path, url }) {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!allow(ip)) {
+    sendJson(res, 429, { error: "rate limited" }, cors);
+    return;
+  }
+  const provided = extractBearer(req.headers["authorization"]);
+  if (!tokenMatches(token, provided)) {
+    sendJson(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  if (!fatsecret) {
+    sendJson(res, 503, { error: "fatsecret not configured" }, cors);
+    return;
+  }
+  try {
+    if (path === "/foods/search") {
+      const q = (url.searchParams.get("q") || "").trim();
+      if (!q) {
+        sendJson(res, 400, { error: "empty query" }, cors);
+        return;
+      }
+      sendJson(res, 200, { foods: await fatsecret.searchFoods(q) }, cors);
+      return;
+    }
+    // /foods/get
+    const id = (url.searchParams.get("id") || "").trim();
+    if (!id) {
+      sendJson(res, 400, { error: "no id" }, cors);
+      return;
+    }
+    sendJson(res, 200, { food: await fatsecret.getFood(id) }, cors);
+  } catch (e) {
+    sendJson(res, 502, { error: String((e && e.message) || e) }, cors);
+  }
 }
 
 async function handleState(req, res, { db, token, maxBody, cors, allow }) {

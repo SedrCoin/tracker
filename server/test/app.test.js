@@ -7,9 +7,9 @@ import { createApp } from "../app.js";
 const TOKEN = "test-token";
 const ORIGIN = "https://sedrcoin.github.io";
 
-async function withServer(run) {
+async function withServer(run, opts = {}) {
   const db = openDb(":memory:");
-  const app = createApp({ db, token: TOKEN, allowOrigin: ORIGIN, maxBody: 1000 });
+  const app = createApp({ db, token: TOKEN, allowOrigin: ORIGIN, maxBody: 1000, fatsecret: opts.fatsecret });
   const server = createServer(app);
   await new Promise((r) => server.listen(0, r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -107,4 +107,62 @@ test("PUT слишком большого тела → 413", async () => {
     });
     assert.equal(res.status, 413);
   });
+});
+
+// --- FatSecret endpoints ---
+
+const mockFatsecret = {
+  searchFoods: async (q) => [{ id: "35755", name: "Bananas (" + q + ")", brand: "", desc: "" }],
+  getFood: async (id) => ({ id, name: "Bananas", brand: "", per100g: { kcal: 89, p: 1.1, f: 0.3, c: 22.8 } }),
+};
+
+test("/foods/search без fatsecret → 503", async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/foods/search?q=banana`, { headers: authH });
+    assert.equal(res.status, 503);
+  });
+});
+
+test("/foods/search без токена → 401", async () => {
+  await withServer(
+    async (base) => {
+      const res = await fetch(`${base}/foods/search?q=banana`);
+      assert.equal(res.status, 401);
+    },
+    { fatsecret: mockFatsecret }
+  );
+});
+
+test("/foods/search с токеном → 200 и список", async () => {
+  await withServer(
+    async (base) => {
+      const res = await fetch(`${base}/foods/search?q=banana`, { headers: authH });
+      assert.equal(res.status, 200);
+      const j = await res.json();
+      assert.equal(j.foods[0].name, "Bananas (banana)");
+    },
+    { fatsecret: mockFatsecret }
+  );
+});
+
+test("/foods/search пустой q → 400", async () => {
+  await withServer(
+    async (base) => {
+      const res = await fetch(`${base}/foods/search?q=`, { headers: authH });
+      assert.equal(res.status, 400);
+    },
+    { fatsecret: mockFatsecret }
+  );
+});
+
+test("/foods/get с токеном → 200 и нутриенты", async () => {
+  await withServer(
+    async (base) => {
+      const res = await fetch(`${base}/foods/get?id=35755`, { headers: authH });
+      assert.equal(res.status, 200);
+      const j = await res.json();
+      assert.equal(j.food.per100g.kcal, 89);
+    },
+    { fatsecret: mockFatsecret }
+  );
 });
