@@ -107,14 +107,36 @@ export function totalWorkouts(days) {
   return Object.values(days).filter((d) => (d.workouts || []).length > 0).length;
 }
 
-// Калории по дням (для графика). Берёт day.nutrition.kcal, пропускает дни без записи.
+// Итоги питания за день (сумма по приёмам пищи). Поддерживает и старый
+// формат { kcal, p, f, c } без meals.
+export function dayNutritionTotals(day) {
+  const n = day && day.nutrition;
+  if (!n) return { kcal: 0, p: 0, f: 0, c: 0 };
+  if (!n.meals) {
+    return { kcal: n.kcal || 0, p: n.p || 0, f: n.f || 0, c: n.c || 0 };
+  }
+  const t = { kcal: 0, p: 0, f: 0, c: 0 };
+  for (const key of Object.keys(n.meals)) {
+    for (const e of n.meals[key] || []) {
+      t.kcal += e.kcal || 0;
+      t.p += e.p || 0;
+      t.f += e.f || 0;
+      t.c += e.c || 0;
+    }
+  }
+  return {
+    kcal: Math.round(t.kcal),
+    p: Math.round(t.p * 10) / 10,
+    f: Math.round(t.f * 10) / 10,
+    c: Math.round(t.c * 10) / 10,
+  };
+}
+
+// Калории по дням (для графика). Пропускает дни без питания.
 export function caloriesPerDay(days) {
   return Object.keys(days)
     .sort()
-    .map((date) => {
-      const n = days[date].nutrition;
-      return { date, value: n && n.kcal ? n.kcal : 0 };
-    })
+    .map((date) => ({ date, value: dayNutritionTotals(days[date]).kcal }))
     .filter((p) => p.value > 0);
 }
 

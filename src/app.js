@@ -8,6 +8,16 @@ const store = createStore(window.localStorage);
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
 
+const MEALS = [
+  { key: "breakfast", name: "Завтрак" },
+  { key: "lunch", name: "Обед" },
+  { key: "dinner", name: "Ужин" },
+  { key: "snack", name: "Перекус" },
+];
+let addingMeal = null; // ключ приёма с открытой панелью добавления
+let selectedFood = null; // выбранный из поиска продукт { id, name, per100g }
+let manualOpen = false;
+
 // Локальная запись + отложенная отправка на сервер.
 function saveState(state) {
   store.set(state);
@@ -141,6 +151,10 @@ document
 
 // ---------- Экран «Сегодня» ----------
 function renderToday() {
+  // полная перерисовка дня закрывает панель добавления еды
+  addingMeal = null;
+  selectedFood = null;
+  manualOpen = false;
   const s = store.get();
   const today = todayISO();
 
@@ -233,35 +247,249 @@ function renderToday() {
   renderNote();
 }
 
+function ensureNutrition(day) {
+  if (!day.nutrition || !day.nutrition.meals) {
+    day.nutrition = { meals: { breakfast: [], lunch: [], dinner: [], snack: [] } };
+  }
+  return day.nutrition;
+}
+
+function apiBase() {
+  return (syncCfg.apiUrl || "").replace(/\/$/, "");
+}
+async function foodSearch(q) {
+  const r = await window.fetch(`${apiBase()}/foods/search?q=${encodeURIComponent(q)}`, {
+    headers: { Authorization: `Bearer ${syncCfg.token}` },
+  });
+  if (!r.ok) throw new Error("поиск " + r.status);
+  return (await r.json()).foods || [];
+}
+async function foodGet(id) {
+  const r = await window.fetch(`${apiBase()}/foods/get?id=${encodeURIComponent(id)}`, {
+    headers: { Authorization: `Bearer ${syncCfg.token}` },
+  });
+  if (!r.ok) throw new Error("деталь " + r.status);
+  return (await r.json()).food;
+}
+
 function renderNutrition() {
   const s = store.get();
   const day = getDay(s, currentDay);
-  const n = day.nutrition || { kcal: 0, p: 0, f: 0, c: 0 };
+  ensureNutrition(day);
+  const totals = L.dayNutritionTotals(day);
+
+  const mealsHtml = MEALS.map((m) => {
+    const entries = day.nutrition.meals[m.key] || [];
+    const sub = entries.reduce((a, e) => a + (e.kcal || 0), 0);
+    const rows = entries
+      .map(
+        (e, i) => `<div class="food-entry">
+          <div class="fe-main"><span class="fe-name">${esc(e.name)}</span><span class="fe-sub">${e.grams ? e.grams + " г · " : ""}${e.kcal} ккал</span></div>
+          <button class="x" data-del-food="${m.key}:${i}">${ICON.x}</button></div>`
+      )
+      .join("");
+    return `<div class="meal">
+      <div class="meal-head"><span class="meal-name">${m.name}</span><span class="meal-sub">${sub} ккал</span></div>
+      ${rows}
+      ${addingMeal === m.key ? addPanelHtml() : `<button class="add-food" data-add-meal="${m.key}">＋ добавить</button>`}
+    </div>`;
+  }).join("");
+
   document.getElementById("today-nutrition").innerHTML = `
     <div class="card">
-      <div class="section-head"><div class="title">Питание</div></div>
-      <label class="nutri-kcal">Калории за день
-        <input type="number" inputmode="numeric" id="n-kcal" value="${n.kcal || ""}" placeholder="ккал" /></label>
-      <div class="nutri-macros">
-        <label>Белки<input type="number" inputmode="numeric" id="n-p" value="${n.p || ""}" placeholder="г" /></label>
-        <label>Жиры<input type="number" inputmode="numeric" id="n-f" value="${n.f || ""}" placeholder="г" /></label>
-        <label>Углеводы<input type="number" inputmode="numeric" id="n-c" value="${n.c || ""}" placeholder="г" /></label>
-      </div>
+      <div class="section-head"><div class="title">Питание</div>
+        <div class="nutri-total">${totals.kcal} ккал · Б ${totals.p} Ж ${totals.f} У ${totals.c}</div></div>
+      ${mealsHtml}
     </div>`;
 
-  const save = () => {
-    const st = store.get();
-    getDay(st, currentDay).nutrition = {
-      kcal: parseInt(document.getElementById("n-kcal").value, 10) || 0,
-      p: parseInt(document.getElementById("n-p").value, 10) || 0,
-      f: parseInt(document.getElementById("n-f").value, 10) || 0,
-      c: parseInt(document.getElementById("n-c").value, 10) || 0,
-    };
-    saveState(st);
-  };
-  ["n-kcal", "n-p", "n-f", "n-c"].forEach((id) =>
-    document.getElementById(id).addEventListener("change", save)
+  wireNutrition();
+}
+
+function addPanelHtml() {
+  const configured = Sync.isConfigured(syncCfg);
+  return `<div class="nutri-add">
+    ${
+      configured
+        ? `<input id="n-search" placeholder="найти продукт (банан, овсянка…)" autocomplete="off" />
+           <div id="n-results"></div><div id="n-selected"></div>`
+        : `<div class="empty-hint">Поиск продуктов включится после настройки синхронизации.</div>`
+    }
+    <button class="link-btn" id="n-manual-toggle">${manualOpen ? "скрыть ручной ввод" : "или ввести вручную"}</button>
+    ${
+      manualOpen
+        ? `<div class="manual-add">
+            <input id="nm-name" placeholder="название" autocomplete="off" />
+            <div class="nutri-macros">
+              <label>Ккал<input id="nm-kcal" type="number" inputmode="numeric"/></label>
+              <label>Б<input id="nm-p" type="number" inputmode="decimal"/></label>
+              <label>Ж<input id="nm-f" type="number" inputmode="decimal"/></label>
+              <label>У<input id="nm-c" type="number" inputmode="decimal"/></label>
+            </div>
+            <button class="btn" id="nm-add">Добавить</button></div>`
+        : ""
+    }
+    <button class="link-btn close" id="n-close">закрыть</button>
+  </div>`;
+}
+
+function wireNutrition() {
+  document.querySelectorAll("[data-add-meal]").forEach((b) =>
+    b.addEventListener("click", () => {
+      addingMeal = b.dataset.addMeal;
+      selectedFood = null;
+      manualOpen = false;
+      renderNutrition();
+    })
   );
+  document.querySelectorAll("[data-del-food]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const [mealKey, idx] = b.dataset.delFood.split(":");
+      const st = store.get();
+      const d = getDay(st, currentDay);
+      ensureNutrition(d);
+      d.nutrition.meals[mealKey].splice(+idx, 1);
+      saveState(st);
+      renderNutrition();
+    })
+  );
+  if (addingMeal) wireAddPanel();
+}
+
+function wireAddPanel() {
+  const close = document.getElementById("n-close");
+  if (close)
+    close.addEventListener("click", () => {
+      addingMeal = null;
+      selectedFood = null;
+      manualOpen = false;
+      renderNutrition();
+    });
+
+  const mt = document.getElementById("n-manual-toggle");
+  if (mt)
+    mt.addEventListener("click", () => {
+      manualOpen = !manualOpen;
+      renderNutrition();
+    });
+
+  const ma = document.getElementById("nm-add");
+  if (ma)
+    ma.addEventListener("click", () => {
+      const name = document.getElementById("nm-name").value.trim();
+      const kcal = parseInt(document.getElementById("nm-kcal").value, 10) || 0;
+      if (!name || !kcal) return;
+      addEntry(addingMeal, {
+        name,
+        grams: 0,
+        kcal,
+        p: parseFloat(document.getElementById("nm-p").value) || 0,
+        f: parseFloat(document.getElementById("nm-f").value) || 0,
+        c: parseFloat(document.getElementById("nm-c").value) || 0,
+      });
+    });
+
+  const search = document.getElementById("n-search");
+  if (search) {
+    let timer = null;
+    search.addEventListener("input", () => {
+      clearTimeout(timer);
+      const q = search.value.trim();
+      if (q.length < 2) {
+        const box = document.getElementById("n-results");
+        if (box) box.innerHTML = "";
+        return;
+      }
+      timer = setTimeout(() => runFoodSearch(q), 400);
+    });
+    search.focus();
+  }
+}
+
+function parseKcalFromDesc(desc) {
+  const m = /Calories:\s*([\d.]+)\s*kcal/i.exec(desc || "");
+  return m ? Math.round(parseFloat(m[1])) + " ккал/100г" : "";
+}
+
+async function runFoodSearch(q) {
+  const box = document.getElementById("n-results");
+  if (!box) return;
+  box.innerHTML = `<div class="searching">ищу…</div>`;
+  try {
+    const foods = await foodSearch(q);
+    const cur = document.getElementById("n-results");
+    if (!cur) return;
+    cur.innerHTML =
+      foods
+        .slice(0, 12)
+        .map(
+          (f) => `<button class="food-row" data-fid="${esc(f.id)}" data-fname="${esc(f.name)}">
+            <span class="fr-name">${esc(f.name)}${f.brand ? " · " + esc(f.brand) : ""}</span>
+            <span class="fr-kcal">${parseKcalFromDesc(f.desc)}</span></button>`
+        )
+        .join("") || `<div class="searching">ничего не нашлось</div>`;
+    cur.querySelectorAll(".food-row").forEach((row) =>
+      row.addEventListener("click", () => selectFood(row.dataset.fid, row.dataset.fname))
+    );
+  } catch (e) {
+    const cur = document.getElementById("n-results");
+    if (cur) cur.innerHTML = `<div class="searching err">ошибка поиска (${esc(e.message)})</div>`;
+  }
+}
+
+async function selectFood(id, name) {
+  const sel = document.getElementById("n-selected");
+  if (sel) sel.innerHTML = `<div class="searching">загружаю «${esc(name)}»…</div>`;
+  try {
+    const food = await foodGet(id);
+    const cur = document.getElementById("n-selected");
+    if (!cur) return;
+    if (!food.per100g) {
+      cur.innerHTML = `<div class="searching err">нет данных в граммах — добавь вручную</div>`;
+      selectedFood = null;
+      return;
+    }
+    selectedFood = { id: food.id, name: food.name, per100g: food.per100g };
+    renderSelected();
+  } catch (e) {
+    const cur = document.getElementById("n-selected");
+    if (cur) cur.innerHTML = `<div class="searching err">ошибка (${esc(e.message)})</div>`;
+  }
+}
+
+function renderSelected() {
+  const sel = document.getElementById("n-selected");
+  if (!sel || !selectedFood) return;
+  const p = selectedFood.per100g;
+  sel.innerHTML = `<div class="selected-food">
+    <div class="sf-name">${esc(selectedFood.name)} <span class="sf-per">${p.kcal} ккал/100г</span></div>
+    <div class="sf-add"><input id="sf-grams" type="number" inputmode="numeric" placeholder="граммы" value="100" />
+      <button class="btn" id="sf-add-btn">Добавить</button></div></div>`;
+  document.getElementById("sf-add-btn").addEventListener("click", () => {
+    const g = parseInt(document.getElementById("sf-grams").value, 10) || 0;
+    if (!g) return;
+    const k = g / 100;
+    addEntry(addingMeal, {
+      name: selectedFood.name,
+      grams: g,
+      kcal: Math.round(p.kcal * k),
+      p: Math.round(p.p * k * 10) / 10,
+      f: Math.round(p.f * k * 10) / 10,
+      c: Math.round(p.c * k * 10) / 10,
+    });
+  });
+  document.getElementById("sf-grams").focus();
+}
+
+function addEntry(mealKey, entry) {
+  const st = store.get();
+  const d = getDay(st, currentDay);
+  ensureNutrition(d);
+  d.nutrition.meals[mealKey].push(entry);
+  saveState(st);
+  addingMeal = null;
+  selectedFood = null;
+  manualOpen = false;
+  renderNutrition();
 }
 
 function sumSets(sets) {

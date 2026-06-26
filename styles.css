@@ -265,13 +265,59 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
 .empty-hint { color: var(--muted); font-size: 14px; font-weight: 600; padding: 6px 0 2px; }
 
 /* ---------- Nutrition ---------- */
-.nutri-kcal { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 700; color: var(--muted); margin-bottom: 12px; }
-.nutri-kcal input { font-size: 24px; font-weight: 800; padding: 13px 14px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
-.nutri-kcal input:focus { outline: none; border-color: var(--orange); }
-.nutri-macros { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.nutri-macros label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted); margin: 0; justify-content: flex-start; align-items: stretch; }
-.nutri-macros input { font-size: 16px; font-weight: 700; text-align: center; padding: 10px 8px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.nutri-total { font-size: 13px; font-weight: 800; color: var(--orange); }
+.meal { border-top: 1px solid var(--hairline); padding: 10px 0 6px; }
+.meal:first-of-type { border-top: none; }
+.meal-head { display: flex; justify-content: space-between; align-items: baseline; }
+.meal-name { font-size: 15px; font-weight: 800; }
+.meal-sub { font-size: 12px; font-weight: 700; color: var(--muted); }
+.food-entry { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
+.fe-main { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fe-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fe-sub { font-size: 12px; font-weight: 600; color: var(--muted); }
+.x { flex: none; margin-left: auto; border: none; background: none; color: var(--red); cursor: pointer; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; }
+.x svg { width: 17px; height: 17px; }
+.x:active { transform: scale(0.9); background: rgba(255, 75, 75, 0.1); }
+.add-food {
+  margin-top: 6px; border: 1.5px dashed var(--border); background: none; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 13px; font-weight: 700;
+  padding: 8px 12px; border-radius: var(--r-sm);
+}
+.add-food:active { transform: scale(0.99); border-color: var(--orange); color: var(--orange); }
+
+.nutri-add { margin-top: 8px; padding: 10px; background: #fafbfc; border: 1px solid var(--border); border-radius: var(--r-sm); }
+#n-search {
+  width: 100%; font: inherit; font-size: 15px; padding: 11px 12px;
+  border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text);
+}
+#n-search:focus { outline: none; border-color: var(--orange); }
+#n-results { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.food-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  width: 100%; text-align: left; cursor: pointer;
+  border: none; background: none; padding: 10px 8px; border-radius: 10px; font: inherit;
+}
+.food-row:active { background: #eef1f5; }
+.fr-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.fr-kcal { flex: none; font-size: 12px; font-weight: 700; color: var(--muted); }
+.searching { font-size: 13px; color: var(--muted); padding: 8px; }
+.searching.err { color: var(--red); }
+.selected-food { margin-top: 8px; padding: 10px; background: #fff3e0; border-radius: var(--r-sm); }
+.sf-name { font-size: 14px; font-weight: 800; }
+.sf-per { font-weight: 700; color: var(--orange); }
+.sf-add { display: flex; gap: 8px; margin-top: 8px; }
+.sf-add input { flex: 1; font: inherit; font-size: 16px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.sf-add .btn { flex: none; }
+
+.manual-add { margin-top: 8px; }
+.manual-add #nm-name { width: 100%; font: inherit; font-size: 15px; padding: 10px 12px; margin-bottom: 8px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.nutri-macros { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; }
+.nutri-macros label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; font-weight: 700; color: var(--muted); margin: 0; justify-content: flex-start; align-items: stretch; }
+.nutri-macros input { font-size: 15px; font-weight: 700; text-align: center; padding: 9px 4px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
 .nutri-macros input:focus { outline: none; border-color: var(--orange); }
+
+.link-btn { display: inline-block; margin-top: 10px; margin-right: 14px; border: none; background: none; cursor: pointer; color: var(--blue); font: inherit; font-size: 13px; font-weight: 700; padding: 0; }
+.link-btn.close { color: var(--muted); }
 
 /* ---------- Habits ---------- */
 .habit {

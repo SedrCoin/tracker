@@ -15,6 +15,7 @@ import {
   repsPerDay,
   totalWorkouts,
   caloriesPerDay,
+  dayNutritionTotals,
   defaultState,
 } from "../src/logic.js";
 import { createStore } from "../src/storage.js";
@@ -165,6 +166,27 @@ test("caloriesPerDay собирает калории по дням и пропу
     { date: "2026-06-21", value: 2200 },
     { date: "2026-06-24", value: 1900 },
   ]);
+});
+
+test("dayNutritionTotals суммирует по приёмам пищи", () => {
+  const day = {
+    nutrition: {
+      meals: {
+        breakfast: [{ name: "Овсянка", grams: 50, kcal: 180, p: 6, f: 3, c: 30 }],
+        lunch: [{ name: "Курица", grams: 200, kcal: 330, p: 62, f: 7, c: 0 }],
+        dinner: [],
+        snack: [{ name: "Банан", grams: 100, kcal: 89, p: 1.1, f: 0.3, c: 22.8 }],
+      },
+    },
+  };
+  assert.deepEqual(dayNutritionTotals(day), { kcal: 599, p: 69.1, f: 10.3, c: 52.8 });
+});
+
+test("dayNutritionTotals: старый формат и пустой день", () => {
+  assert.deepEqual(dayNutritionTotals({ nutrition: { kcal: 2000, p: 100, f: 50, c: 250 } }), {
+    kcal: 2000, p: 100, f: 50, c: 250,
+  });
+  assert.deepEqual(dayNutritionTotals({}), { kcal: 0, p: 0, f: 0, c: 0 });
 });
 
 // --- Дефолтный стейт ---
