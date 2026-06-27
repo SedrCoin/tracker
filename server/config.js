@@ -3,7 +3,12 @@ export function loadConfig(env = process.env) {
   if (!token) throw new Error("TRACKER_TOKEN is required");
   const fatsecret =
     env.FATSECRET_CLIENT_ID && env.FATSECRET_CLIENT_SECRET
-      ? { clientId: env.FATSECRET_CLIENT_ID, clientSecret: env.FATSECRET_CLIENT_SECRET }
+      ? {
+          clientId: env.FATSECRET_CLIENT_ID,
+          clientSecret: env.FATSECRET_CLIENT_SECRET,
+          region: env.FATSECRET_REGION || "RU",
+          language: env.FATSECRET_LANGUAGE || "ru",
+        }
       : null;
   return {
     token,

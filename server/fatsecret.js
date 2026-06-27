@@ -23,7 +23,7 @@ function asArray(x) {
   return Array.isArray(x) ? x : x ? [x] : [];
 }
 
-export function createFatSecret({ clientId, clientSecret, fetcher = fetch }) {
+export function createFatSecret({ clientId, clientSecret, region = "RU", language = "ru", fetcher = fetch }) {
   let token = null;
   let tokenExp = 0;
 
@@ -45,7 +45,8 @@ export function createFatSecret({ clientId, clientSecret, fetcher = fetch }) {
 
   async function call(params) {
     const t = await getToken();
-    const body = new URLSearchParams({ ...params, format: "json" }).toString();
+    const locale = region ? { region, ...(language ? { language } : {}) } : {};
+    const body = new URLSearchParams({ ...params, ...locale, format: "json" }).toString();
     const res = await fetcher(API_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/x-www-form-urlencoded" },

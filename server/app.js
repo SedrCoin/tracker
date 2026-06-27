@@ -35,7 +35,9 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
 
   return async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
-    const path = url.pathname;
+    let path = url.pathname;
+    if (path === "/trackerapi") path = "/";
+    if (path.startsWith("/trackerapi/")) path = path.slice("/trackerapi".length);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, cors);

@@ -95,6 +95,7 @@ const ICON = {
   flame: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-2 4-2 7a2 2 0 104 0c0-1 0-1 .5-2 1.5 2 3.5 4 3.5 7a6 6 0 11-12 0c0-4 4-5 6-12z"/></svg>`,
   x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M7 6l1 14h8l1-14"/></svg>`,
 };
 
 // ---------- Даты ----------
@@ -515,12 +516,15 @@ function renderWorkouts() {
       }
       const rows = (wk.sets || [])
         .map(
-          (r, si) => `<div class="set-row">
-            <span class="set-idx">Подход ${si + 1}</span>
-            <div class="stepper">
-              <button class="step minus" data-wk="${i}" data-set="${si}" data-d="-1">−</button>
-              <span class="step-val" id="val-${i}-${si}">${r}</span>
-              <button class="step plus" data-wk="${i}" data-set="${si}" data-d="1">+</button>
+          (r, si) => `<div class="set-swipe" data-swipe-row>
+            <button class="set-delete" data-delset-wk="${i}" data-delset="${si}">${ICON.trash}<span>Удалить</span></button>
+            <div class="set-row" data-swipe-content>
+              <span class="set-idx">Подход ${si + 1}</span>
+              <div class="rep-control">
+                <button class="step minus" data-wk="${i}" data-set="${si}" data-d="-1">−</button>
+                <input class="reps-input" id="val-${i}-${si}" data-wk="${i}" data-set="${si}" type="number" inputmode="numeric" min="0" value="${r}" aria-label="Повторы в подходе ${si + 1}" />
+                <button class="step plus" data-wk="${i}" data-set="${si}" data-d="1">+</button>
+              </div>
             </div></div>`
         )
         .join("");
@@ -585,10 +589,24 @@ function wireWorkoutEvents() {
       if (v < 0) v = 0;
       day.workouts[wk].sets[si] = v;
       saveState(s);
-      document.getElementById(`val-${wk}-${si}`).textContent = v;
+      document.getElementById(`val-${wk}-${si}`).value = v;
       document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
     })
   );
+
+  document.querySelectorAll(".reps-input").forEach((inp) => {
+    inp.addEventListener("focus", () => inp.select());
+    inp.addEventListener("change", () => {
+      const wk = +inp.dataset.wk, si = +inp.dataset.set;
+      const s = store.get();
+      const day = getDay(s, currentDay);
+      const v = Math.max(0, parseInt(inp.value, 10) || 0);
+      day.workouts[wk].sets[si] = v;
+      inp.value = v;
+      saveState(s);
+      document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
+    });
+  });
 
   document.querySelectorAll("[data-addset]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -611,11 +629,61 @@ function wireWorkoutEvents() {
   document.querySelectorAll("[data-del-wk]").forEach((b) =>
     b.addEventListener("click", () => {
       const s = store.get();
+      const wk = getDay(s, currentDay).workouts[+b.dataset.delWk];
+      const name = wk ? wk.name : "упражнение";
+      if (!confirm(`Удалить «${name}» из тренировки?`)) return;
       getDay(s, currentDay).workouts.splice(+b.dataset.delWk, 1);
       saveState(s);
       renderWorkouts();
     })
   );
+
+  document.querySelectorAll("[data-delset]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const s = store.get();
+      const workout = getDay(s, currentDay).workouts[+b.dataset.delsetWk];
+      if (!workout || !workout.sets) return;
+      workout.sets.splice(+b.dataset.delset, 1);
+      if (!workout.sets.length) workout.sets.push(0);
+      saveState(s);
+      renderWorkouts();
+    })
+  );
+
+  wireSetSwipe();
+}
+
+function wireSetSwipe() {
+  document.querySelectorAll("[data-swipe-row]").forEach((row) => {
+    const content = row.querySelector("[data-swipe-content]");
+    let startX = 0, startY = 0, dx = 0, dragging = false;
+    const close = () => {
+      row.classList.remove("open");
+      content.style.transform = "";
+    };
+    content.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      dx = 0;
+      dragging = true;
+    }, { passive: true });
+    content.addEventListener("touchmove", (e) => {
+      if (!dragging) return;
+      const t = e.touches[0];
+      dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dy > Math.abs(dx)) return;
+      const x = Math.max(-92, Math.min(0, dx));
+      content.style.transform = `translateX(${x}px)`;
+    }, { passive: true });
+    content.addEventListener("touchend", () => {
+      dragging = false;
+      if (dx < -44) row.classList.add("open");
+      else close();
+      content.style.transform = "";
+    });
+  });
 }
 
 function renderHabits() {
@@ -871,7 +939,7 @@ function renderWeighList() {
   const s = store.get();
   document.getElementById("weigh-list").innerHTML = s.weighIns
     .map(
-      (wi, i) => `<div class="edit-row">
+      (wi, i) => `<div class="edit-row weigh-row">
         <input type="date" data-wi="${i}" data-f="date" value="${wi.date}" />
         <input type="number" step="0.1" inputmode="decimal" data-wi="${i}" data-f="weight" value="${wi.weight}" />
         <button class="icon-x" data-del-wi="${i}">${ICON.x}</button></div>`

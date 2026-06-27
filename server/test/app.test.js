@@ -11,7 +11,7 @@ async function withServer(run, opts = {}) {
   const db = openDb(":memory:");
   const app = createApp({ db, token: TOKEN, allowOrigin: ORIGIN, maxBody: 1000, fatsecret: opts.fatsecret });
   const server = createServer(app);
-  await new Promise((r) => server.listen(0, r));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     await run(base);
@@ -29,6 +29,14 @@ test("GET /health без токена → 200 ok", async () => {
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { ok: true });
     assert.equal(res.headers.get("access-control-allow-origin"), ORIGIN);
+  });
+});
+
+test("GET /trackerapi/health тоже работает, если прокси не срезал префикс", async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/trackerapi/health`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
   });
 });
 
@@ -137,6 +145,18 @@ test("/foods/search с токеном → 200 и список", async () => {
   await withServer(
     async (base) => {
       const res = await fetch(`${base}/foods/search?q=banana`, { headers: authH });
+      assert.equal(res.status, 200);
+      const j = await res.json();
+      assert.equal(j.foods[0].name, "Bananas (banana)");
+    },
+    { fatsecret: mockFatsecret }
+  );
+});
+
+test("/trackerapi/foods/search с токеном → 200 и список", async () => {
+  await withServer(
+    async (base) => {
+      const res = await fetch(`${base}/trackerapi/foods/search?q=banana`, { headers: authH });
       assert.equal(res.status, 200);
       const j = await res.json();
       assert.equal(j.foods[0].name, "Bananas (banana)");

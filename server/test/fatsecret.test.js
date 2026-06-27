@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { per100gFrom } from "../fatsecret.js";
+import { createFatSecret, per100gFrom } from "../fatsecret.js";
 
 test("per100gFrom: граммовая порция 100г", () => {
   const s = [
@@ -28,4 +28,23 @@ test("per100gFrom: нет граммовой порции → null", () => {
   assert.equal(per100gFrom([{ metric_serving_unit: "ml", metric_serving_amount: "100" }]), null);
   assert.equal(per100gFrom([]), null);
   assert.equal(per100gFrom(undefined), null);
+});
+
+test("createFatSecret добавляет русскую локаль в запросы", async () => {
+  const bodies = [];
+  const client = createFatSecret({
+    clientId: "id",
+    clientSecret: "secret",
+    fetcher: async (url, opts) => {
+      if (String(url).includes("/connect/token")) {
+        return { ok: true, json: async () => ({ access_token: "token", expires_in: 3600 }) };
+      }
+      bodies.push(opts.body);
+      return { ok: true, json: async () => ({ foods: { food: [] } }) };
+    },
+  });
+  await client.searchFoods("творог");
+  assert.match(bodies[0], /region=RU/);
+  assert.match(bodies[0], /language=ru/);
+  assert.match(bodies[0], /search_expression=%D1%82%D0%B2%D0%BE%D1%80%D0%BE%D0%B3/);
 });
