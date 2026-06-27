@@ -7,7 +7,9 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260627-3";
+const APP_VERSION = "20260627-5";
+let todayRoute = "main"; // main | workouts | nutrition
+let statsRange = "week"; // week | month
 
 const MEALS = [
   { key: "breakfast", name: "Завтрак" },
@@ -122,12 +124,24 @@ function weekday(iso) {
   return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
+function challengePhotoIndex(date = new Date()) {
+  return Math.floor(date.getHours() / 6);
+}
+
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function pluralRu(n, one, few, many) {
+  const v = Math.abs(Number(n)) % 100;
+  const last = v % 10;
+  if (v > 10 && v < 20) return many;
+  if (last > 1 && last < 5) return few;
+  return last === 1 ? one : many;
 }
 
 function getDay(state, iso) {
@@ -149,11 +163,28 @@ function show(tab) {
 
 document
   .querySelectorAll(".tab")
-  .forEach((t) => t.addEventListener("click", () => show(t.dataset.tab)));
+  .forEach((t) => t.addEventListener("click", () => {
+    if (t.dataset.tab === "today") {
+      todayRoute = "main";
+      addingMeal = null;
+      selectedFood = null;
+      manualOpen = false;
+    }
+    show(t.dataset.tab);
+  }));
 
 // ---------- Экран «Сегодня» ----------
 function renderToday() {
-  // полная перерисовка дня закрывает панель добавления еды
+  if (todayRoute === "workouts") {
+    renderWorkoutDetailScreen();
+    return;
+  }
+  if (todayRoute === "nutrition") {
+    renderNutritionDetailScreen();
+    return;
+  }
+
+  // возврат на главный экран закрывает временные панели
   addingMeal = null;
   selectedFood = null;
   manualOpen = false;
@@ -169,6 +200,8 @@ function renderToday() {
   const ch = s.settings.challenge;
   const rem = L.challengeRemaining(ch, today);
   const dayNo = L.challengeDayNumber(ch, today);
+  const challengePhoto = challengePhotoIndex();
+  const challengeProgress = Math.round(Math.min(1, Math.max(0, dayNo / 75)) * 360);
   const noAlco = L.daysSince(s.settings.noAlcoholStart, today);
   const noSpray = L.daysSince(s.settings.noSpraysStart, today);
 
@@ -185,7 +218,7 @@ function renderToday() {
     </div>
 
     <div class="counters">
-      <div class="counter hero">
+      <div class="counter hero challenge-photo-${challengePhoto}" style="--challenge-progress: ${challengeProgress}deg">
         <div class="c-label">Челлендж</div>
         <div class="c-row"><div class="c-big">${rem}</div><div class="c-pill">День ${dayNo} / 75</div></div>
         <div class="c-sub">осталось дней</div>
@@ -224,10 +257,12 @@ function renderToday() {
 
   document.getElementById("day-prev").addEventListener("click", () => {
     currentDay = L.addDays(currentDay, -1);
+    todayRoute = "main";
     renderToday();
   });
   document.getElementById("day-next").addEventListener("click", () => {
     currentDay = L.addDays(currentDay, 1);
+    todayRoute = "main";
     renderToday();
   });
 
@@ -247,6 +282,27 @@ function renderToday() {
   renderNutrition();
   renderHabits();
   renderNote();
+}
+
+function renderDetailShell({ title, sub, accent, bodyId }) {
+  screens.today.innerHTML = `
+    <div class="detail-top">
+      <button class="navbtn detail-back" id="detail-back" aria-label="Назад">${ICON.chevL}</button>
+      <div>
+        <div class="detail-kicker">${esc(sub)}</div>
+        <h1>${esc(title)}</h1>
+      </div>
+    </div>
+    <div class="detail-accent ${accent || ""}"></div>
+    <div id="${bodyId}"></div>
+  `;
+  document.getElementById("detail-back").addEventListener("click", () => {
+    todayRoute = "main";
+    addingMeal = null;
+    selectedFood = null;
+    manualOpen = false;
+    renderToday();
+  });
 }
 
 function ensureNutrition(day) {
@@ -279,7 +335,55 @@ function renderNutrition() {
   const day = getDay(s, currentDay);
   ensureNutrition(day);
   const totals = L.dayNutritionTotals(day);
+  const mealSummary = MEALS.map((m) => {
+    const entries = day.nutrition.meals[m.key] || [];
+    const kcal = entries.reduce((a, e) => a + (e.kcal || 0), 0);
+    return { ...m, count: entries.length, kcal };
+  });
+  const summaryRows = mealSummary
+    .filter((m) => m.count || m.kcal)
+    .map(
+      (m) => `<div class="summary-row">
+        <span>${m.name}</span>
+        <b>${m.kcal} ккал · ${m.count} ${pluralRu(m.count, "продукт", "продукта", "продуктов")}</b>
+      </div>`
+    )
+    .join("");
 
+  document.getElementById("today-nutrition").innerHTML = `
+    <button class="card module-card nutrition-card route-card" data-open-nutrition>
+      <div class="module-head">
+        <div>
+          <div class="eyebrow">Питание</div>
+          <div class="module-title">${totals.kcal} ккал</div>
+        </div>
+      </div>
+      <div class="macro-grid">
+        <div><span>Белки</span><b>${totals.p}</b></div>
+        <div><span>Жиры</span><b>${totals.f}</b></div>
+        <div><span>Углеводы</span><b>${totals.c}</b></div>
+      </div>
+      <div class="summary-list">
+        ${summaryRows || `<div class="empty-hint">Еда ещё не добавлена.</div>`}
+      </div>
+    </button>`;
+
+  document.querySelector("[data-open-nutrition]").addEventListener("click", () => {
+    todayRoute = "nutrition";
+    renderToday();
+  });
+}
+
+function renderNutritionDetailScreen() {
+  renderDetailShell({ title: "Питание", sub: `${weekday(currentDay)}, ${dayMonth(currentDay)}`, accent: "nutrition", bodyId: "nutrition-detail" });
+  renderNutritionDetail();
+}
+
+function renderNutritionDetail() {
+  const s = store.get();
+  const day = getDay(s, currentDay);
+  ensureNutrition(day);
+  const totals = L.dayNutritionTotals(day);
   const mealsHtml = MEALS.map((m) => {
     const entries = day.nutrition.meals[m.key] || [];
     const sub = entries.reduce((a, e) => a + (e.kcal || 0), 0);
@@ -290,19 +394,22 @@ function renderNutrition() {
           <button class="x" data-del-food="${m.key}:${i}">${ICON.x}</button></div>`
       )
       .join("");
-    return `<div class="meal">
+    return `<div class="meal detail-panel">
       <div class="meal-head"><span class="meal-name">${m.name}</span><span class="meal-sub">${sub} ккал</span></div>
-      ${rows}
+      ${rows || `<div class="empty-hint">Пока пусто.</div>`}
       ${addingMeal === m.key ? addPanelHtml() : `<button class="add-food" data-add-meal="${m.key}">＋ добавить</button>`}
     </div>`;
   }).join("");
 
-  document.getElementById("today-nutrition").innerHTML = `
-    <div class="card">
-      <div class="section-head"><div class="title">Питание</div>
-        <div class="nutri-total">${totals.kcal} ккал · Б ${totals.p} Ж ${totals.f} У ${totals.c}</div></div>
-      ${mealsHtml}
-    </div>`;
+  document.getElementById("nutrition-detail").innerHTML = `
+    <div class="detail-hero nutrition">
+      <div><span>Калории</span><b>${totals.kcal}</b></div>
+      <div><span>Белки</span><b>${totals.p}</b></div>
+      <div><span>Жиры</span><b>${totals.f}</b></div>
+      <div><span>Углеводы</span><b>${totals.c}</b></div>
+    </div>
+    ${mealsHtml}
+  `;
 
   wireNutrition();
 }
@@ -340,7 +447,7 @@ function wireNutrition() {
       addingMeal = b.dataset.addMeal;
       selectedFood = null;
       manualOpen = false;
-      renderNutrition();
+      renderNutritionDetail();
     })
   );
   document.querySelectorAll("[data-del-food]").forEach((b) =>
@@ -351,7 +458,7 @@ function wireNutrition() {
       ensureNutrition(d);
       d.nutrition.meals[mealKey].splice(+idx, 1);
       saveState(st);
-      renderNutrition();
+      renderNutritionDetail();
     })
   );
   if (addingMeal) wireAddPanel();
@@ -364,14 +471,14 @@ function wireAddPanel() {
       addingMeal = null;
       selectedFood = null;
       manualOpen = false;
-      renderNutrition();
+      renderNutritionDetail();
     });
 
   const mt = document.getElementById("n-manual-toggle");
   if (mt)
     mt.addEventListener("click", () => {
       manualOpen = !manualOpen;
-      renderNutrition();
+      renderNutritionDetail();
     });
 
   const ma = document.getElementById("nm-add");
@@ -498,7 +605,7 @@ function addEntry(mealKey, entry) {
   addingMeal = null;
   selectedFood = null;
   manualOpen = false;
-  renderNutrition();
+  renderNutritionDetail();
 }
 
 function sumSets(sets) {
@@ -508,12 +615,62 @@ function sumSets(sets) {
 function renderWorkouts() {
   const s = store.get();
   const day = getDay(s, currentDay);
+  const workouts = day.workouts || [];
+  const workoutRows = workouts
+    .map((wk) => {
+      if (wk.type === "cardio") {
+        const value = (wk.value || "").trim();
+        return `<div class="summary-row"><span>${esc(wk.name)}</span><b>${value || "кардио"}</b></div>`;
+      }
+      const sets = wk.sets || [];
+      const total = sumSets(sets);
+      return `<div class="summary-row">
+        <span>${esc(wk.name)}</span>
+        <b>${sets.length} ${pluralRu(sets.length, "подход", "подхода", "подходов")} · ${total} ${pluralRu(total, "повторение", "повторения", "повторений")}</b>
+      </div>`;
+    })
+    .join("");
+  const workoutTotal = workouts.reduce((a, wk) => a + (wk.type === "reps" ? sumSets(wk.sets) : 0), 0);
+
+  document.getElementById("today-workouts").innerHTML = `
+    <button class="card module-card workout-card route-card" data-open-workouts>
+      <div class="module-head">
+        <div>
+          <div class="eyebrow">Тренировка</div>
+          <div class="module-title">${workouts.length ? `${workouts.length} ${pluralRu(workouts.length, "упражнение", "упражнения", "упражнений")}` : "Нет записи"}</div>
+        </div>
+      </div>
+      <div class="summary-metric">
+        <span>Повторы за день</span>
+        <b>${workoutTotal}</b>
+      </div>
+      <div class="summary-list">
+        ${workoutRows || `<div class="empty-hint">Добавь упражнение в подробностях.</div>`}
+      </div>
+    </button>`;
+
+  document.querySelector("[data-open-workouts]").addEventListener("click", () => {
+    todayRoute = "workouts";
+    renderToday();
+  });
+}
+
+function renderWorkoutDetailScreen() {
+  renderDetailShell({ title: "Тренировка", sub: `${weekday(currentDay)}, ${dayMonth(currentDay)}`, accent: "workout", bodyId: "workout-detail" });
+  renderWorkoutDetail();
+}
+
+function renderWorkoutDetail() {
+  const s = store.get();
+  const day = getDay(s, currentDay);
+  const workouts = day.workouts || [];
+  const workoutTotal = workouts.reduce((a, wk) => a + (wk.type === "reps" ? sumSets(wk.sets) : 0), 0);
   const chips =
     s.exercises
       .map((e) => `<button class="chip" data-add-ex="${esc(e.id)}">${esc(e.name)}</button>`)
       .join("") + `<button class="chip add" id="add-custom">${ICON.plus} своё</button>`;
 
-  const blocks = (day.workouts || [])
+  const blocks = workouts
     .map((wk, i) => {
       if (wk.type === "cardio") {
         return `<div class="ex-block">
@@ -539,6 +696,9 @@ function renderWorkouts() {
       return `<div class="ex-block">
         <div class="ex-head"><span class="ex-name">${esc(wk.name)}</span>
           <button class="ex-del" data-del-wk="${i}">${ICON.x}</button></div>
+        <label class="exercise-weight">Вес, кг
+          <input class="exercise-weight-input" data-weight-wk="${i}" type="number" step="0.5" inputmode="decimal" placeholder="необязательно" value="${wk.weight != null ? esc(wk.weight) : ""}" />
+        </label>
         <div class="set-rows">${rows}</div>
         <button class="add-set" data-addset="${i}">Добавить подход</button>
         <div class="ex-total">Всего: <b id="total-${i}">${sumSets(wk.sets)}</b></div>
@@ -546,14 +706,16 @@ function renderWorkouts() {
     })
     .join("");
 
-  const body = blocks || `<div class="empty-hint">Нажми упражнение выше, чтобы записать подходы.</div>`;
-
-  document.getElementById("today-workouts").innerHTML = `
-    <div class="card">
-      <div class="section-head"><div class="title">Тренировка</div></div>
+  document.getElementById("workout-detail").innerHTML = `
+    <div class="detail-hero workout">
+      <div><span>Упражнения</span><b>${workouts.length}</b></div>
+      <div><span>Повторы</span><b>${workoutTotal}</b></div>
+    </div>
+    <div class="detail-panel">
       <div class="chips">${chips}</div>
-      ${body}
-    </div>`;
+    </div>
+    ${blocks || `<div class="detail-panel"><div class="empty-hint">Нажми упражнение выше, чтобы записать подходы.</div></div>`}
+  `;
 
   wireWorkoutEvents();
 }
@@ -570,7 +732,7 @@ function wireWorkoutEvents() {
           : { exerciseId: ex.id, name: ex.name, type: "reps", sets: [0] }
       );
       saveState(s);
-      renderWorkouts();
+      renderWorkoutDetail();
     })
   );
 
@@ -578,13 +740,21 @@ function wireWorkoutEvents() {
     const name = prompt("Название упражнения?");
     if (!name) return;
     const isCardio = confirm("Это кардио (бег и т.п.)?  OK — да,  Отмена — подходы.");
+    let weight = null;
+    if (!isCardio) {
+      const rawWeight = prompt("Вес, кг? Можно оставить пустым.");
+      if (rawWeight != null && rawWeight.trim() !== "") {
+        const parsedWeight = parseFloat(rawWeight.replace(",", "."));
+        if (isFinite(parsedWeight)) weight = parsedWeight;
+      }
+    }
     const s = store.get();
     const day = getDay(s, currentDay);
     day.workouts.push(
-      isCardio ? { name, type: "cardio", value: "" } : { name, type: "reps", sets: [0] }
+      isCardio ? { name, type: "cardio", value: "" } : { name, type: "reps", sets: [0], ...(weight != null ? { weight } : {}) }
     );
     saveState(s);
-    renderWorkouts();
+    renderWorkoutDetail();
   });
 
   // степпер — обновление на месте, без перерисовки
@@ -597,8 +767,7 @@ function wireWorkoutEvents() {
       if (v < 0) v = 0;
       day.workouts[wk].sets[si] = v;
       saveState(s);
-      document.getElementById(`val-${wk}-${si}`).value = v;
-      document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
+      renderWorkoutDetail();
     })
   );
 
@@ -612,7 +781,7 @@ function wireWorkoutEvents() {
       day.workouts[wk].sets[si] = v;
       inp.value = v;
       saveState(s);
-      document.getElementById(`total-${wk}`).textContent = sumSets(day.workouts[wk].sets);
+      renderWorkoutDetail();
     });
   });
 
@@ -622,7 +791,7 @@ function wireWorkoutEvents() {
       const sets = getDay(s, currentDay).workouts[+b.dataset.addset].sets;
       sets.push(sets.length ? sets[sets.length - 1] : 0); // копируем прошлый подход
       saveState(s);
-      renderWorkouts();
+      renderWorkoutDetail();
     })
   );
 
@@ -630,6 +799,22 @@ function wireWorkoutEvents() {
     inp.addEventListener("change", () => {
       const s = store.get();
       getDay(s, currentDay).workouts[+inp.dataset.wk].value = inp.value;
+      saveState(s);
+    })
+  );
+
+  document.querySelectorAll("input.exercise-weight-input").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const s = store.get();
+      const workout = getDay(s, currentDay).workouts[+inp.dataset.weightWk];
+      const raw = inp.value.trim().replace(",", ".");
+      if (!raw) delete workout.weight;
+      else {
+        const weight = parseFloat(raw);
+        if (!isFinite(weight)) return;
+        workout.weight = weight;
+        inp.value = weight;
+      }
       saveState(s);
     })
   );
@@ -642,7 +827,7 @@ function wireWorkoutEvents() {
       if (!confirm(`Удалить «${name}» из тренировки?`)) return;
       getDay(s, currentDay).workouts.splice(+b.dataset.delWk, 1);
       saveState(s);
-      renderWorkouts();
+      renderWorkoutDetail();
     })
   );
 
@@ -654,7 +839,7 @@ function wireWorkoutEvents() {
       workout.sets.splice(+b.dataset.delset, 1);
       if (!workout.sets.length) workout.sets.push(0);
       saveState(s);
-      renderWorkouts();
+      renderWorkoutDetail();
     })
   );
 
@@ -765,37 +950,167 @@ function celebrate() {
 }
 
 // ---------- Экран «Статистика» ----------
-function renderStats() {
-  const s = store.get();
-  const exNames = [
+function rangeDays(endISO, count) {
+  const days = [];
+  for (let i = count - 1; i >= 0; i--) days.push(L.addDays(endISO, -i));
+  return days;
+}
+
+function chartDayLabel(iso, range) {
+  const d = L.parseISO(iso);
+  if (range === "week") return ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][d.getDay()];
+  return String(d.getDate());
+}
+
+function workoutCountInRange(days, dates) {
+  return dates.filter((iso) => days[iso] && (days[iso].workouts || []).length > 0).length;
+}
+
+function exercisePoints(days, exerciseName, dates) {
+  return dates.map((date) => {
+    const workouts = ((days[date] && days[date].workouts) || []).filter(
+      (w) => w.type === "reps" && w.name === exerciseName
+    );
+    const value = workouts.reduce((a, w) => a + sumSets(w.sets), 0);
+    const sets = workouts.reduce((a, w) => a + ((w.sets && w.sets.length) || 0), 0);
+    const weighted = [...workouts].reverse().find((w) => w.weight != null && isFinite(Number(w.weight)));
+    return {
+      date,
+      label: chartDayLabel(date, statsRange),
+      value,
+      sets,
+      weight: weighted ? Math.round(Number(weighted.weight) * 10) / 10 : null,
+    };
+  });
+}
+
+function exerciseNamesInState(days) {
+  return [
     ...new Set(
-      Object.values(s.days).flatMap((d) =>
+      Object.values(days).flatMap((d) =>
         (d.workouts || []).filter((w) => w.type === "reps").map((w) => w.name)
       )
     ),
   ];
+}
+
+function percentDelta(current, previous) {
+  if (!previous && !current) return 0;
+  if (!previous) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function statTile(label, value, sub = "") {
+  return `<div class="stat-tile"><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
+}
+
+function renderStats() {
+  const s = store.get();
+  const count = statsRange === "week" ? 7 : 30;
+  const today = todayISO();
+  const dates = rangeDays(today, count);
+  const previousDates = rangeDays(L.addDays(dates[0], -1), count);
+  const totalWorkouts = workoutCountInRange(s.days, dates);
+  const previousWorkouts = workoutCountInRange(s.days, previousDates);
+  const workoutDelta = totalWorkouts - previousWorkouts;
+  const rangeLabel = statsRange === "week" ? "на этой неделе" : "за 30 дней";
+  const prevLabel = statsRange === "week" ? "с прошлой неделей" : "с прошлым периодом";
+  const colors = ["#58cc02", "#ff9a00", "#1d73e8", "#a560f0"];
+
+  const exNames = exerciseNamesInState(s.days);
   const exBlocks = exNames
-    .map((name) => {
-      const series = L.repsPerDay(s.days, name).slice(-10); // последние 10 тренировок
-      return `<div class="card">
-        <div class="section-head"><div class="title">${esc(name)}</div></div>
-        ${Charts.barChart(series, "#58cc02")}</div>`;
+    .map((name, index) => {
+      const points = exercisePoints(s.days, name, dates);
+      const previous = exercisePoints(s.days, name, previousDates);
+      const total = points.reduce((a, p) => a + p.value, 0);
+      const totalSets = points.reduce((a, p) => a + p.sets, 0);
+      const previousTotal = previous.reduce((a, p) => a + p.value, 0);
+      const active = points.filter((p) => p.value > 0);
+      const best = active.reduce((acc, p) => (p.value > acc.value ? p : acc), { value: 0, label: "—" });
+      const avg = active.length ? Math.round((total / active.length) * 10) / 10 : 0;
+      const delta = percentDelta(total, previousTotal);
+      const color = colors[index % colors.length];
+      const weightSeries = points
+        .filter((p) => p.weight != null)
+        .map((p) => ({ date: p.date, label: p.label, value: p.weight }));
+      if (!total && !weightSeries.length) return "";
+      return `<section class="card stat-card exercise-stat">
+        <div class="stat-card-head">
+          <div class="title">${esc(name)}</div>
+          <div class="stat-pill" style="--pill-color:${color}">Всего: ${total}</div>
+        </div>
+        ${Charts.barChart(points, color)}
+        <div class="stat-tiles">
+          ${statTile("Среднее", avg, "повт.")}
+          ${statTile("Лучший день", best.value, best.label)}
+          ${statTile("Подходы", totalSets, "за период")}
+        </div>
+        <div class="stat-progress" style="--progress-color:${color}">
+          <b>${delta > 0 ? "+" : ""}${delta}%</b><span>${prevLabel}</span>
+        </div>
+        ${
+          weightSeries.length
+            ? `<div class="weight-exercise-chart">
+                <div class="mini-title">Вес в упражнении</div>
+                ${Charts.lineChart(weightSeries, color)}
+              </div>`
+            : ""
+        }
+      </section>`;
     })
     .join("");
 
   const weightSeries = [...s.weighIns]
     .sort((a, b) => (a.date < b.date ? -1 : 1))
-    .map((x) => ({ date: x.date, value: x.weight }));
+    .slice(-count)
+    .map((x) => ({ date: x.date, label: chartDayLabel(x.date, statsRange), value: x.weight }));
+  const avgWeight = weightSeries.length
+    ? Math.round((weightSeries.reduce((a, p) => a + Number(p.value), 0) / weightSeries.length) * 10) / 10
+    : 0;
+  const weightChange = weightSeries.length > 1
+    ? Math.round((weightSeries[weightSeries.length - 1].value - weightSeries[0].value) * 10) / 10
+    : 0;
+  const minWeight = weightSeries.reduce((acc, p) => (Number(p.value) < Number(acc.value) ? p : acc), weightSeries[0] || { value: 0, label: "—" });
 
   screens.stats.innerHTML = `
-    <h1>Статистика</h1>
-    <div class="card"><div class="eyebrow">Всего тренировок</div><div class="stat-big">${L.totalWorkouts(s.days)}</div></div>
+    <div class="stats-top">
+      <h1>Статистика</h1>
+      <div class="segmented">
+        <button class="${statsRange === "week" ? "active" : ""}" data-stats-range="week">Неделя</button>
+        <button class="${statsRange === "month" ? "active" : ""}" data-stats-range="month">Месяц</button>
+      </div>
+    </div>
+    <section class="card stat-summary">
+      <div>
+        <div class="eyebrow">Всего тренировок</div>
+        <div class="stat-big">${totalWorkouts}</div>
+        <div class="muted-line">${rangeLabel}</div>
+      </div>
+      <div class="stat-compare">
+        <b>${workoutDelta > 0 ? "+" : ""}${workoutDelta}</b>
+        <span>${prevLabel}</span>
+      </div>
+    </section>
     ${exBlocks}
-    <div class="card"><div class="section-head"><div class="title">Вес</div></div>${Charts.lineChart(weightSeries, "#1cb0f6")}</div>
-    <div class="card"><div class="section-head"><div class="title">Калории</div></div>${Charts.lineChart(L.caloriesPerDay(s.days).slice(-14), "#ff9a00")}</div>
-    <div id="habit-cal"></div>
+    <section class="card stat-card">
+      <div class="stat-card-head">
+        <div class="title">Вес</div>
+        <div class="stat-pill blue">Средний: ${avgWeight} кг</div>
+      </div>
+      ${Charts.lineChart(weightSeries, "#3b82f6")}
+      <div class="stat-tiles">
+        ${statTile("Изменение", `${weightChange > 0 ? "+" : ""}${weightChange} кг`, "за период")}
+        ${statTile("Лучшая отметка", `${minWeight.value} кг`, minWeight.label)}
+        ${statTile("Записей", weightSeries.length, "за период")}
+      </div>
+    </section>
   `;
-  renderHabitCalendar();
+  document.querySelectorAll("[data-stats-range]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      statsRange = btn.dataset.statsRange;
+      renderStats();
+    })
+  );
 }
 
 function renderHabitCalendar() {
@@ -1007,8 +1322,16 @@ function importData(e) {
 }
 
 // ---------- Старт ----------
+let renderedChallengePhoto = challengePhotoIndex();
 show("today");
 pullOnStart();
+
+setInterval(() => {
+  const nextPhoto = challengePhotoIndex();
+  if (nextPhoto === renderedChallengePhoto) return;
+  renderedChallengePhoto = nextPhoto;
+  if (!screens.today.classList.contains("hidden") && todayRoute === "main") renderToday();
+}, 60 * 1000);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () =>
