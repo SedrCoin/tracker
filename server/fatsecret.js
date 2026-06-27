@@ -23,6 +23,62 @@ function asArray(x) {
   return Array.isArray(x) ? x : x ? [x] : [];
 }
 
+const RU_FOOD_TERMS = [
+  ["оливковое масло", "olive oil"],
+  ["куриная грудка", "chicken breast"],
+  ["арахисовая паста", "peanut butter"],
+  ["протеиновый порошок", "protein powder"],
+  ["греческий йогурт", "greek yogurt"],
+  ["бананы", "banana"],
+  ["банан", "banana"],
+  ["яблоки", "apple"],
+  ["яблоко", "apple"],
+  ["творог", "cottage cheese"],
+  ["овсянка", "oatmeal"],
+  ["овес", "oats"],
+  ["курица", "chicken"],
+  ["индейка", "turkey"],
+  ["говядина", "beef"],
+  ["свинина", "pork"],
+  ["лосось", "salmon"],
+  ["тунец", "tuna"],
+  ["рыба", "fish"],
+  ["яйца", "egg"],
+  ["яйцо", "egg"],
+  ["рис", "rice"],
+  ["гречка", "buckwheat"],
+  ["макароны", "pasta"],
+  ["паста", "pasta"],
+  ["картошка", "potato"],
+  ["картофель", "potato"],
+  ["помидор", "tomato"],
+  ["помидоры", "tomato"],
+  ["огурец", "cucumber"],
+  ["огурцы", "cucumber"],
+  ["молоко", "milk"],
+  ["кефир", "kefir"],
+  ["йогурт", "yogurt"],
+  ["сыр", "cheese"],
+  ["хлеб", "bread"],
+  ["масло", "butter"],
+  ["авокадо", "avocado"],
+  ["орехи", "nuts"],
+  ["миндаль", "almonds"],
+  ["арахис", "peanuts"],
+  ["фасоль", "beans"],
+  ["чечевица", "lentils"],
+  ["нут", "chickpeas"],
+];
+
+export function fallbackEnglishQuery(query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!/[а-яё]/i.test(q)) return "";
+  for (const [ru, en] of RU_FOOD_TERMS) {
+    if (q === ru || q.includes(ru)) return q.replace(ru, en);
+  }
+  return "";
+}
+
 export function createFatSecret({ clientId, clientSecret, region = "RU", language = "ru", fetcher = fetch }) {
   let token = null;
   let tokenExp = 0;
@@ -57,7 +113,7 @@ export function createFatSecret({ clientId, clientSecret, region = "RU", languag
     return j;
   }
 
-  async function searchFoods(query) {
+  async function searchRaw(query) {
     const j = await call({ method: "foods.search", search_expression: query, max_results: "20" });
     const foods = asArray(j.foods && j.foods.food);
     return foods.map((f) => ({
@@ -66,6 +122,13 @@ export function createFatSecret({ clientId, clientSecret, region = "RU", languag
       brand: f.brand_name || "",
       desc: f.food_description || "",
     }));
+  }
+
+  async function searchFoods(query) {
+    const foods = await searchRaw(query);
+    if (foods.length) return foods;
+    const fallback = fallbackEnglishQuery(query);
+    return fallback && fallback !== query ? searchRaw(fallback) : foods;
   }
 
   async function getFood(id) {

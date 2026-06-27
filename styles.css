@@ -332,23 +332,24 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
   border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text);
 }
 #n-search:focus { outline: none; border-color: var(--orange); }
-#n-results { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+#n-results { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 240px; overflow-y: auto; overscroll-behavior: contain; }
 .food-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
   width: 100%; text-align: left; cursor: pointer;
   border: none; background: none; padding: 10px 8px; border-radius: 10px; font: inherit;
 }
 .food-row:active { background: #eef1f5; }
-.fr-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.fr-name { min-width: 0; font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fr-kcal { flex: none; font-size: 12px; font-weight: 700; color: var(--muted); }
 .searching { font-size: 13px; color: var(--muted); padding: 8px; }
 .searching.err { color: var(--red); }
-.selected-food { margin-top: 8px; padding: 10px; background: #fff3e0; border-radius: var(--r-sm); }
-.sf-name { font-size: 14px; font-weight: 800; }
-.sf-per { font-weight: 700; color: var(--orange); }
-.sf-add { display: flex; gap: 8px; margin-top: 8px; }
-.sf-add input { flex: 1; font: inherit; font-size: 16px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
-.sf-add .btn { flex: none; }
+.selected-food { margin-top: 8px; padding: 10px; background: #fff3e0; border-radius: var(--r-sm); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.sf-main { min-width: 0; }
+.sf-name { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-per { margin-top: 2px; font-size: 12px; font-weight: 700; color: var(--orange); }
+.sf-add { display: grid; grid-template-columns: minmax(76px, 0.8fr) minmax(112px, 1.2fr); gap: 8px; align-items: center; }
+.sf-add input { width: 100%; min-width: 0; font: inherit; font-size: 16px; font-weight: 800; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
+.sf-add .btn { width: 100%; margin-top: 0; padding: 12px 14px; font-size: 14px; }
 
 .manual-add { margin-top: 8px; }
 .manual-add #nm-name { width: 100%; font: inherit; font-size: 15px; padding: 10px 12px; margin-bottom: 8px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }

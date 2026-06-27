@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFatSecret, per100gFrom } from "../fatsecret.js";
+import { createFatSecret, fallbackEnglishQuery, per100gFrom } from "../fatsecret.js";
 
 test("per100gFrom: граммовая порция 100г", () => {
   const s = [
@@ -47,4 +47,38 @@ test("createFatSecret добавляет русскую локаль в запр
   assert.match(bodies[0], /region=RU/);
   assert.match(bodies[0], /language=ru/);
   assert.match(bodies[0], /search_expression=%D1%82%D0%B2%D0%BE%D1%80%D0%BE%D0%B3/);
+});
+
+test("fallbackEnglishQuery переводит популярные русские продукты", () => {
+  assert.equal(fallbackEnglishQuery("банан"), "banana");
+  assert.equal(fallbackEnglishQuery("творог 5%"), "cottage cheese 5%");
+  assert.equal(fallbackEnglishQuery("куриная грудка"), "chicken breast");
+  assert.equal(fallbackEnglishQuery("banana"), "");
+});
+
+test("searchFoods повторяет русский пустой поиск английским fallback", async () => {
+  const bodies = [];
+  const client = createFatSecret({
+    clientId: "id",
+    clientSecret: "secret",
+    fetcher: async (url, opts) => {
+      if (String(url).includes("/connect/token")) {
+        return { ok: true, json: async () => ({ access_token: "token", expires_in: 3600 }) };
+      }
+      bodies.push(opts.body);
+      const body = new URLSearchParams(opts.body);
+      const q = body.get("search_expression");
+      return {
+        ok: true,
+        json: async () =>
+          q === "banana"
+            ? { foods: { food: { food_id: "1", food_name: "Banana", food_description: "Calories: 89 kcal" } } }
+            : { foods: { food: [] } },
+      };
+    },
+  });
+  const foods = await client.searchFoods("банан");
+  assert.equal(foods[0].name, "Banana");
+  assert.match(bodies[0], /search_expression=%D0%B1%D0%B0%D0%BD%D0%B0%D0%BD/);
+  assert.match(bodies[1], /search_expression=banana/);
 });

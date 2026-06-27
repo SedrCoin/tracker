@@ -7,7 +7,7 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260627-2";
+const APP_VERSION = "20260627-3";
 
 const MEALS = [
   { key: "breakfast", name: "Завтрак" },
@@ -439,6 +439,10 @@ async function runFoodSearch(q) {
 }
 
 async function selectFood(id, name) {
+  const results = document.getElementById("n-results");
+  const search = document.getElementById("n-search");
+  if (results) results.innerHTML = "";
+  if (search) search.value = name;
   const sel = document.getElementById("n-selected");
   if (sel) sel.innerHTML = `<div class="searching">загружаю «${esc(name)}»…</div>`;
   try {
@@ -463,8 +467,11 @@ function renderSelected() {
   if (!sel || !selectedFood) return;
   const p = selectedFood.per100g;
   sel.innerHTML = `<div class="selected-food">
-    <div class="sf-name">${esc(selectedFood.name)} <span class="sf-per">${p.kcal} ккал/100г</span></div>
-    <div class="sf-add"><input id="sf-grams" type="number" inputmode="numeric" placeholder="граммы" value="100" />
+    <div class="sf-main">
+      <div class="sf-name">${esc(selectedFood.name)}</div>
+      <div class="sf-per">${p.kcal} ккал/100г · Б ${p.p} Ж ${p.f} У ${p.c}</div>
+    </div>
+    <div class="sf-add"><input id="sf-grams" type="number" inputmode="numeric" placeholder="г" value="100" aria-label="Граммы" />
       <button class="btn" id="sf-add-btn">Добавить</button></div></div>`;
   document.getElementById("sf-add-btn").addEventListener("click", () => {
     const g = parseInt(document.getElementById("sf-grams").value, 10) || 0;
