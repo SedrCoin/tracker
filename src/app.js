@@ -7,6 +7,7 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
+const APP_VERSION = "20260627-2";
 
 const MEALS = [
   { key: "breakfast", name: "Завтрак" },
@@ -843,6 +844,7 @@ function renderSettings() {
       <button class="btn blue" id="export">Экспорт в файл</button>
       <button class="btn ghost" id="import">Импорт из файла</button>
       <input type="file" id="import-file" accept="application/json" hidden></div>
+    <div class="app-version">Версия ${APP_VERSION}</div>
   `;
   wireSettings();
 }

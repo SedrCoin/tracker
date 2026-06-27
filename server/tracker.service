@@ -11,6 +11,10 @@ Environment=PORT=8787
 Environment=DB_PATH=/opt/tracker/server/data/tracker.json
 Environment=ALLOW_ORIGIN=https://sedrcoin.github.io
 Environment=TRACKER_TOKEN=ЗАМЕНИ_НА_СГЕНЕРИРОВАННЫЙ
+Environment=FATSECRET_CLIENT_ID=c2ca75a739274b8eba04c3d3970a6287
+Environment=FATSECRET_CLIENT_SECRET=7cda5b8196aa4f6d9586ce6b4be5e084
+Environment=FATSECRET_REGION=RU
+Environment=FATSECRET_LANGUAGE=ru
 Restart=always
 User=www-data
 

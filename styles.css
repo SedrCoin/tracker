@@ -424,6 +424,7 @@ textarea:focus { outline: none; border-color: var(--green); }
 .icon-x svg { width: 17px; height: 17px; }
 .icon-x:active { transform: scale(0.9); color: var(--red); background: rgba(255, 75, 75, 0.1); }
 .card .btn { display: block; width: 100%; margin-top: 12px; }
+.app-version { color: var(--muted); font-size: 12px; font-weight: 700; text-align: center; padding: 4px 0 12px; }
 
 /* ---------- Confetti ---------- */
 .confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
