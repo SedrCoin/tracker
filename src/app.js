@@ -7,7 +7,7 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-6";
+const APP_VERSION = "20260703-7";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -156,6 +156,30 @@ function profileAvatar(profile) {
   if (profile && profile.photo) return `<img src="${esc(profile.photo)}" alt="">`;
   const letter = ((profile && profile.name) || "?").trim().charAt(0).toUpperCase() || "?";
   return `<span>${esc(letter)}</span>`;
+}
+
+function readImageDataUrl(file, maxSide = 512, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Не удалось прочитать фото"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Не удалось открыть фото"));
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function esc(s) {
@@ -582,15 +606,15 @@ function renderProfileEditor() {
     </div>`;
   let photo = profile.photo || "";
   document.getElementById("profile-photo-btn").addEventListener("click", () => document.getElementById("profile-photo-file").click());
-  document.getElementById("profile-photo-file").addEventListener("change", (e) => {
+  document.getElementById("profile-photo-file").addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      photo = reader.result;
+    try {
+      photo = await readImageDataUrl(file, 512, 0.84);
       document.getElementById("profile-photo-preview").innerHTML = `<img src="${esc(photo)}" alt="">`;
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      alert("Не удалось обработать фото");
+    }
   });
   document.getElementById("profile-save").addEventListener("click", () => {
     const next = store.get();
@@ -603,8 +627,12 @@ function renderProfileEditor() {
       weight: isFinite(weight) ? Math.round(weight * 10) / 10 : null,
       photo,
     };
-    saveState(next);
-    renderToday();
+    try {
+      saveState(next);
+      renderToday();
+    } catch (e) {
+      alert("Не удалось сохранить профиль. Попробуй фото поменьше.");
+    }
   });
 }
 
@@ -2060,14 +2088,14 @@ function wireSettings() {
     })
   );
   document.getElementById("set-ch-photo-file").addEventListener("click", () => document.getElementById("ch-photo-file").click());
-  document.getElementById("ch-photo-file").addEventListener("change", (e) => {
+  document.getElementById("ch-photo-file").addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      document.getElementById("set-ch-photo").value = reader.result;
-    };
-    reader.readAsDataURL(file);
+    try {
+      document.getElementById("set-ch-photo").value = await readImageDataUrl(file, 1200, 0.78);
+    } catch {
+      alert("Не удалось обработать фото");
+    }
   });
 
   renderEditableList("ex-list", "exercises", "add-ex-preset");
