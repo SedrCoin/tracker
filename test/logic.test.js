@@ -203,41 +203,17 @@ test("lastMeasurementValue берёт свежий замер на выбран�
 
 // --- Дефолтный стейт ---
 
-test("дефолтный стейт содержит настройки счётчиков", () => {
+test("дефолтный стейт — чистый новый аккаунт", () => {
   const s = defaultState();
-  assert.equal(s.settings.noAlcoholStart, "2025-09-27");
-  assert.equal(s.settings.noSpraysStart, "2026-05-02");
-  assert.equal(s.settings.challenge.anchorDate, "2026-06-22");
+  assert.deepEqual(s.settings.counters, []);
+  assert.equal(s.settings.challenge.enabled, false);
   assert.equal(s.settings.challenge.remainingAtAnchor, 75);
-  assert.equal(s.settings.challenge.startDate, "2026-06-21");
   assert.equal(s.settings.weighIn.intervalDays, 14);
-});
-
-test("4 привычки и 2 пресета-упражнения", () => {
-  const s = defaultState();
-  assert.equal(s.habits.length, 4);
-  assert.equal(s.exercises.filter((e) => e.preset).length, 2);
+  assert.deepEqual(s.habits, []);
+  assert.deepEqual(s.exercises, []);
+  assert.deepEqual(s.weighIns, []);
   assert.deepEqual(s.measurements, []);
-});
-
-test("сид-данные: тренировки за 21–24.06 и вес 78.8", () => {
-  const s = defaultState();
-  assert.deepEqual(s.days["2026-06-21"].workouts[0].sets, [6, 4, 4, 2, 4]);
-  assert.deepEqual(s.days["2026-06-24"].workouts[1].sets, [4, 7, 8, 6, 6]);
-  assert.equal(totalWorkouts(s.days), 4);
-  assert.equal(s.weighIns[0].weight, 78.8);
-  assert.equal(s.weighIns[0].date, "2026-06-22");
-});
-
-test("сид-данные: стартовые серии привычек", () => {
-  const s = defaultState();
-  const SEED = "2026-06-25";
-  assert.equal(habitStreak(s.days, "fr", SEED), 151);
-  assert.equal(habitStreak(s.days, "chess", SEED), 110);
-  assert.equal(habitStreak(s.days, "meditation", SEED), 63); // сегодня ещё не сделано
-  assert.equal(habitStreak(s.days, "pushups", SEED), 7);
-  // медитация сегодня действительно не отмечена
-  assert.ok(!s.days[SEED].habits.meditation);
+  assert.deepEqual(s.days, {});
 });
 
 // --- Хранилище ---
@@ -255,9 +231,61 @@ function memStorage() {
   };
 }
 
+function oldPersonalStarterState(profileName = "Друг") {
+  const days = {};
+  const ensure = (iso) => (days[iso] || (days[iso] = { workouts: [], habits: {}, note: "" }));
+  ["2026-06-25", "2026-06-24"].forEach((iso) => {
+    ensure(iso).habits.fr = true;
+    ensure(iso).habits.chess = true;
+  });
+  ensure("2026-06-21").workouts = [
+    { exerciseId: "turnik", name: "Турник", type: "reps", sets: [6, 4, 4, 2, 4] },
+    { exerciseId: "brusya", name: "Брусья", type: "reps", sets: [5, 4, 4, 5, 6] },
+  ];
+  ensure("2026-06-22").workouts = [
+    { exerciseId: "turnik", name: "Турник", type: "reps", sets: [2, 3, 2, 3, 3] },
+    { exerciseId: "brusya", name: "Брусья", type: "reps", sets: [8, 3, 5, 3, 3] },
+  ];
+  ensure("2026-06-23").workouts = [
+    { exerciseId: "turnik", name: "Турник", type: "reps", sets: [2, 2, 3, 2, 2] },
+    { exerciseId: "brusya", name: "Брусья", type: "reps", sets: [4, 7, 7, 6, 5] },
+  ];
+  ensure("2026-06-24").workouts = [
+    { exerciseId: "turnik", name: "Турник", type: "reps", sets: [3, 5, 6, 4, 5] },
+    { exerciseId: "brusya", name: "Брусья", type: "reps", sets: [4, 7, 8, 6, 6] },
+  ];
+  return {
+    settings: {
+      noAlcoholStart: "2025-09-27",
+      noSpraysStart: "2026-05-02",
+      counters: [
+        { id: "no-alcohol", name: "Без алкоголя", startDate: "2025-09-27", tone: "alco" },
+        { id: "no-sprays", name: "Без спреев", startDate: "2026-05-02", tone: "spray" },
+      ],
+      profile: { name: profileName, height: 180, weight: 80, photo: "", measurements: {} },
+      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21", targetDays: 75, enabled: true, photoUrl: "" },
+      weighIn: { anchorDate: "2026-06-22", intervalDays: 14 },
+    },
+    exercises: [
+      { id: "turnik", name: "Турник", type: "reps", preset: true },
+      { id: "brusya", name: "Брусья", type: "reps", preset: true },
+    ],
+    habits: [
+      { id: "fr", name: "Французский" },
+      { id: "chess", name: "Шахматы" },
+      { id: "pushups", name: "10 отжиманий" },
+      { id: "meditation", name: "Медитация" },
+    ],
+    weighIns: [{ date: "2026-06-22", weight: 78.8 }],
+    measurements: [],
+    days,
+  };
+}
+
 test("createStore сидит дефолт при пустом хранилище", () => {
   const store = createStore(memStorage());
-  assert.equal(store.get().settings.challenge.remainingAtAnchor, 75);
+  assert.equal(store.get().settings.challenge.enabled, false);
+  assert.deepEqual(store.get().habits, []);
 });
 
 test("save/get сохраняет изменения", () => {
@@ -272,10 +300,13 @@ test("save/get сохраняет изменения", () => {
 
 test("export -> import роундтрип", () => {
   const store = createStore(memStorage());
+  const s = store.get();
+  s.weighIns.push({ date: "2026-07-03", weight: 80 });
+  store.set(s);
   const json = store.exportJSON();
   const target = createStore(memStorage());
   target.importJSON(json);
-  assert.equal(target.get().weighIns[0].weight, 78.8);
+  assert.equal(target.get().weighIns[0].weight, 80);
 });
 
 test("importJSON отклоняет мусор", () => {
@@ -290,7 +321,7 @@ test("get() бэкфиллит challenge.startDate в старом состоя�
   delete legacy.settings.challenge.startDate;
   ls.setItem("tracker.state.v2", JSON.stringify(legacy));
   const store = createStore(ls);
-  assert.equal(store.get().settings.challenge.startDate, "2026-06-21");
+  assert.equal(store.get().settings.challenge.startDate, legacy.settings.challenge.anchorDate);
 });
 
 test("get() бэкфиллит measurements в старом состоянии", () => {
@@ -300,6 +331,32 @@ test("get() бэкфиллит measurements в старом состоянии",
   ls.setItem("tracker.state.v2", JSON.stringify(legacy));
   const store = createStore(ls);
   assert.deepEqual(store.get().measurements, []);
+});
+
+test("get() очищает старый персональный сид у нового пользователя", () => {
+  const ls = memStorage();
+  ls.setItem("tracker.state.v2", JSON.stringify(oldPersonalStarterState("Друг")));
+  const store = createStore(ls);
+  const s = store.get();
+  assert.deepEqual(s.settings.counters, []);
+  assert.equal(s.settings.challenge.enabled, false);
+  assert.deepEqual(s.habits, []);
+  assert.deepEqual(s.exercises, []);
+  assert.deepEqual(s.weighIns, []);
+  assert.deepEqual(s.days, {});
+  assert.equal(s.settings.profile.name, "Друг");
+});
+
+test("get() не очищает старый персональный сид у профиля Артём", () => {
+  const ls = memStorage();
+  ls.setItem("tracker.state.v2", JSON.stringify(oldPersonalStarterState("Артём")));
+  const store = createStore(ls);
+  const s = store.get();
+  assert.equal(s.settings.counters.length, 2);
+  assert.equal(s.settings.challenge.enabled, true);
+  assert.equal(s.habits.length, 4);
+  assert.equal(s.exercises.length, 2);
+  assert.equal(s.weighIns[0].weight, 78.8);
 });
 
 // --- Синхронизация ---

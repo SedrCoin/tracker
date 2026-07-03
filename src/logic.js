@@ -147,58 +147,22 @@ export function lastMeasurementValue(measurements, key, todayISO) {
   return past.length ? past[0][key] : null;
 }
 
-// --- Дефолтный стейт и стартовые данные ---
+// --- Дефолтный стейт ---
 
 export function defaultState() {
-  const SEED = "2026-06-25"; // день первичной настройки — якорь для стартовых серий
-
-  const exTurnik = { id: "turnik", name: "Турник", type: "reps", preset: true };
-  const exBrusya = { id: "brusya", name: "Брусья", type: "reps", preset: true };
-  const habits = [
-    { id: "fr", name: "Французский" },
-    { id: "chess", name: "Шахматы" },
-    { id: "pushups", name: "10 отжиманий" },
-    { id: "meditation", name: "Медитация" },
-  ];
-
-  const days = {};
-  const ensure = (iso) => (days[iso] || (days[iso] = { workouts: [], habits: {}, note: "" }));
-  const seedStreak = (habitId, count, endISO) => {
-    for (let i = 0; i < count; i++) ensure(addDays(endISO, -i)).habits[habitId] = true;
-  };
-  const addWorkout = (iso, turnik, brusya) => {
-    ensure(iso).workouts = [
-      { exerciseId: "turnik", name: "Турник", type: "reps", sets: turnik },
-      { exerciseId: "brusya", name: "Брусья", type: "reps", sets: brusya },
-    ];
-  };
-
-  seedStreak("fr", 151, SEED); // включая сегодня
-  seedStreak("chess", 110, SEED); // включая сегодня
-  seedStreak("meditation", 63, addDays(SEED, -1)); // не включая сегодня (ещё не сделано)
-  seedStreak("pushups", 7, SEED); // включая сегодня
-
-  addWorkout("2026-06-21", [6, 4, 4, 2, 4], [5, 4, 4, 5, 6]);
-  addWorkout("2026-06-22", [2, 3, 2, 3, 3], [8, 3, 5, 3, 3]);
-  addWorkout("2026-06-23", [2, 2, 3, 2, 2], [4, 7, 7, 6, 5]);
-  addWorkout("2026-06-24", [3, 5, 6, 4, 5], [4, 7, 8, 6, 6]);
+  const today = toISO(new Date());
 
   return {
     settings: {
-      noAlcoholStart: "2025-09-27",
-      noSpraysStart: "2026-05-02",
-      counters: [
-        { id: "no-alcohol", name: "Без алкоголя", startDate: "2025-09-27", tone: "alco" },
-        { id: "no-sprays", name: "Без спреев", startDate: "2026-05-02", tone: "spray" },
-      ],
+      counters: [],
       profile: { name: "", height: null, weight: null, photo: "", measurements: {} },
-      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21", targetDays: 75, enabled: true, photoUrl: "" },
-      weighIn: { anchorDate: "2026-06-22", intervalDays: 14 },
+      challenge: { anchorDate: today, remainingAtAnchor: 75, startDate: today, targetDays: 75, enabled: false, photoUrl: "" },
+      weighIn: { anchorDate: today, intervalDays: 14 },
     },
-    exercises: [exTurnik, exBrusya],
-    habits,
-    weighIns: [{ date: "2026-06-22", weight: 78.8 }],
+    exercises: [],
+    habits: [],
+    weighIns: [],
     measurements: [],
-    days,
+    days: {},
   };
 }
