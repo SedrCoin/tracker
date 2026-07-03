@@ -1,4 +1,4 @@
-import { defaultState } from "./logic.js";
+import { addDays, defaultState } from "./logic.js";
 
 const KEY = "tracker.state.v2";
 const META_KEY = "tracker.meta.v2";
@@ -181,8 +181,58 @@ function isValidState(s) {
     Array.isArray(s.habits) &&
     Array.isArray(s.exercises) &&
     Array.isArray(s.weighIns) &&
-    Array.isArray(s.measurements)
+    Array.isArray(s.measurements) &&
+    Array.isArray(s.challenges)
   );
+}
+
+function challengeId(existing, base) {
+  const used = new Set((existing || []).map((item) => item.id));
+  let id = base;
+  let n = 1;
+  while (used.has(id)) id = `${base}-${n++}`;
+  return id;
+}
+
+function legacyChallengeChecks(challenge) {
+  const checks = {};
+  const start = challenge.startDate || challenge.anchorDate;
+  const duration = Number(challenge.targetDays || challenge.durationDays || 75) || 75;
+  if (!start) return checks;
+  const yesterday = addDays(todayISO(), -1);
+  for (let i = 0; i < duration; i++) {
+    const iso = addDays(start, i);
+    if (iso > yesterday) break;
+    checks[iso] = true;
+  }
+  return checks;
+}
+
+function migrateLegacyChallenge(s) {
+  let changed = false;
+  if (!Array.isArray(s.challenges)) {
+    s.challenges = [];
+    changed = true;
+  }
+  const ch = s.settings && s.settings.challenge;
+  if (!ch || !ch.enabled || s.challenges.length) return changed;
+  const startDate = ch.startDate || ch.anchorDate || todayISO();
+  const durationDays = Number(ch.targetDays || ch.durationDays || 75) || 75;
+  s.challenges.push({
+    id: challengeId(s.challenges, "legacy-75"),
+    templateId: null,
+    name: "Челлендж 75",
+    durationDays,
+    startDate,
+    strict: false,
+    status: "active",
+    checks: legacyChallengeChecks({ ...ch, startDate, durationDays }),
+    rules: [],
+    accent: "hard",
+    photoUrl: typeof ch.photoUrl === "string" ? ch.photoUrl : "",
+    shared: null,
+  });
+  return true;
 }
 
 function migrateState(s) {
@@ -234,6 +284,9 @@ function migrateState(s) {
     changed = true;
   }
   if (stripPersonalStarterData(s)) {
+    changed = true;
+  }
+  if (migrateLegacyChallenge(s)) {
     changed = true;
   }
   return changed;

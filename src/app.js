@@ -2,6 +2,7 @@ import { createStore } from "./storage.js";
 import * as L from "./logic.js";
 import * as Charts from "./charts.js";
 import * as Sync from "./sync.js";
+import { CHALLENGE_TEMPLATES, challengeTemplateById } from "./challenge-catalog.js";
 
 const store = createStore(window.localStorage);
 
@@ -24,10 +25,12 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-12";
+const APP_VERSION = "20260703-13";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
+let challengeDetailId = null;
+let challengeStartDraft = null;
 let calendarOpen = false;
 let customExerciseOpen = false;
 let chipMenuExerciseId = null;
@@ -160,6 +163,7 @@ async function pushNow(options = {}) {
 
 const screens = {
   today: document.getElementById("screen-today"),
+  challenges: document.getElementById("screen-challenges"),
   stats: document.getElementById("screen-stats"),
   settings: document.getElementById("screen-settings"),
 };
@@ -309,6 +313,113 @@ function uniqueExercises(exercises) {
   });
 }
 
+function ensureChallenges(state) {
+  if (!Array.isArray(state.challenges)) state.challenges = [];
+  return state.challenges;
+}
+
+function randomId(prefix = "c") {
+  const bytes = new Uint8Array(4);
+  window.crypto.getRandomValues(bytes);
+  return `${prefix}_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function challengeAccent(challenge) {
+  return String((challenge && challenge.accent) || "hard").replace(/[^a-z0-9-]/gi, "");
+}
+
+function challengeDisplayStatus(challenge, refISO = todayISO()) {
+  return L.challengeStatus(challenge, refISO);
+}
+
+function challengeDayProgress(challenge, refISO = todayISO()) {
+  const duration = Number(challenge.durationDays || challenge.targetDays || 1) || 1;
+  const raw = L.challengeDayNumber(challenge, refISO);
+  return Math.max(1, Math.min(duration, raw));
+}
+
+function activeChallenges(state, refISO = todayISO()) {
+  return ensureChallenges(state).filter((ch) => challengeDisplayStatus(ch, refISO) === "active");
+}
+
+function primaryChallenge(state, refISO = todayISO()) {
+  return activeChallenges(state, refISO)[0] || null;
+}
+
+function challengePercent(challenge, refISO = todayISO()) {
+  const duration = Number(challenge.durationDays || 1) || 1;
+  return Math.round(Math.min(1, Math.max(0, challengeDayProgress(challenge, refISO) / duration)) * 360);
+}
+
+function challengeCanCheck(challenge, iso = todayISO()) {
+  const start = challenge.startDate;
+  const end = L.challengeEndDate(challenge);
+  if (!start || iso < start || iso > end || iso > todayISO()) return false;
+  if (challenge.status === "stopped") return false;
+  if (challenge.checks && challenge.checks[iso] === true) return true;
+  return challengeDisplayStatus(challenge, iso) === "active";
+}
+
+function toggleChallengeCheck(state, challengeId, iso = todayISO()) {
+  const challenge = ensureChallenges(state).find((ch) => ch.id === challengeId);
+  if (!challenge || !challengeCanCheck(challenge, iso)) return false;
+  if (!challenge.checks || typeof challenge.checks !== "object") challenge.checks = {};
+  challenge.checks[iso] = challenge.checks[iso] !== true;
+  return true;
+}
+
+function templateToChallenge(template, values = {}) {
+  const today = todayISO();
+  const durationDays = Math.max(1, parseInt(values.durationDays || template.days || 30, 10) || 30);
+  const name = String(values.name || template.name || "Челлендж").trim() || "Челлендж";
+  const rules = Array.isArray(values.rules)
+    ? values.rules
+    : String(values.rulesText || "")
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean);
+  return {
+    id: randomId("c"),
+    templateId: template.id === "custom" ? null : template.id,
+    name,
+    durationDays,
+    startDate: values.startDate || today,
+    strict: values.strict != null ? !!values.strict : !!template.strict,
+    status: "active",
+    checks: {},
+    rules: rules.length ? rules : [...(template.rules || [])],
+    accent: template.accent || "hard",
+    photoUrl: "",
+    shared: null,
+  };
+}
+
+function challengeCardHtml(challenge, { compact = false } = {}) {
+  const today = todayISO();
+  const duration = Number(challenge.durationDays || 1) || 1;
+  const done = L.challengeCompletedCount(challenge);
+  const streak = L.challengeStreak(challenge, today);
+  const status = challengeDisplayStatus(challenge, today);
+  const checked = challenge.checks && challenge.checks[today] === true;
+  const statusText = status === "done" ? "завершён" : status === "failed" ? "провален" : status === "stopped" ? "остановлен" : `${done}/${duration}`;
+  return `<article class="challenge-card ${compact ? "compact" : ""} accent-${challengeAccent(challenge)}" data-open-challenge="${esc(challenge.id)}" style="--challenge-progress:${challengePercent(challenge, today)}deg">
+    <div class="challenge-ring"><span>${challengeDayProgress(challenge, today)}</span></div>
+    <div class="challenge-card-main">
+      <div class="challenge-title">${esc(challenge.name)}</div>
+      <div class="challenge-meta">День ${challengeDayProgress(challenge, today)} из ${duration} · стрик ${streak}</div>
+      <div class="challenge-status">${esc(statusText)}</div>
+    </div>
+    ${status === "active" ? `<button class="challenge-check ${checked ? "done" : ""}" data-challenge-check="${esc(challenge.id)}" aria-label="Отметить сегодня">${ICON.check}</button>` : ""}
+  </article>`;
+}
+
+function templateCardHtml(template, compact = false) {
+  return `<button class="template-card accent-${challengeAccent(template)} ${compact ? "compact" : ""}" data-template="${esc(template.id)}">
+    <span>${esc(template.name)}</span>
+    <b>${template.days} дней${template.strict ? " · жёсткий" : ""}</b>
+  </button>`;
+}
+
 // ---------- Навигация по вкладкам ----------
 function show(tab) {
   for (const [name, el] of Object.entries(screens))
@@ -317,6 +428,7 @@ function show(tab) {
     .querySelectorAll(".tab")
     .forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   if (tab === "today") renderToday();
+  if (tab === "challenges") renderChallenges();
   if (tab === "stats") renderStats();
   if (tab === "settings") renderSettings();
 }
@@ -330,6 +442,10 @@ document
       selectedFood = null;
       manualOpen = false;
       customExerciseOpen = false;
+    }
+    if (t.dataset.tab !== "challenges") {
+      challengeDetailId = null;
+      challengeStartDraft = null;
     }
     show(t.dataset.tab);
   }));
@@ -364,14 +480,11 @@ function renderToday() {
   else if (currentDay === L.addDays(today, 1)) { big = "Завтра"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
   else { big = dayMonth(currentDay); sub = weekday(currentDay); }
 
-  const ch = s.settings.challenge || {};
-  const targetDays = ch.targetDays || 75;
-  const rem = ch.enabled ? L.challengeRemaining(ch, today) : 0;
-  const dayNo = ch.enabled ? L.challengeDayNumber(ch, today) : 0;
+  const mainChallenge = primaryChallenge(s, today);
+  const otherChallenges = activeChallenges(s, today).filter((ch) => ch.id !== (mainChallenge && mainChallenge.id));
   const challengePhoto = challengePhotoIndex();
-  const challengeProgress = Math.round(Math.min(1, Math.max(0, dayNo / targetDays)) * 360);
   const counters = Array.isArray(s.settings.counters) ? s.settings.counters : [];
-  const customChallengeBg = ch.photoUrl ? `background-image:url("${esc(ch.photoUrl)}")` : "";
+  const customChallengeBg = mainChallenge && mainChallenge.photoUrl ? `background-image:url("${esc(mainChallenge.photoUrl)}")` : "";
   const counterCards = counters
     .map((c, i) => {
       const tone = c.tone || (i % 2 ? "spray" : "alco");
@@ -406,13 +519,15 @@ function renderToday() {
     <div id="day-calendar-layer">${calendarOpen ? calendarHtml(s, currentDay) : ""}</div>
 
     <div class="counters">
-      ${ch.enabled ? `<div class="counter hero challenge-photo-${challengePhoto}" style="--challenge-progress: ${challengeProgress}deg; ${customChallengeBg}">
-        <div class="c-label">Челлендж</div>
-        <div class="c-row"><div class="c-big">${rem}</div><div class="c-pill">День ${dayNo} / ${targetDays}</div></div>
-        <div class="c-sub">осталось дней</div>
+      ${mainChallenge ? `<div class="counter hero challenge-photo-${challengePhoto}" data-open-challenge="${esc(mainChallenge.id)}" style="--challenge-progress: ${challengePercent(mainChallenge, today)}deg; ${customChallengeBg}">
+        <div class="c-label">${esc(mainChallenge.name)}</div>
+        <div class="c-row"><div class="c-big">${challengeDayProgress(mainChallenge, today)}</div><div class="c-pill">из ${mainChallenge.durationDays}</div></div>
+        <div class="c-sub">${L.challengeCompletedCount(mainChallenge)} выполнено · стрик ${L.challengeStreak(mainChallenge, today)}</div>
+        ${currentDay === today && challengeCanCheck(mainChallenge, today) ? `<button class="hero-check ${mainChallenge.checks && mainChallenge.checks[today] ? "done" : ""}" data-challenge-check="${esc(mainChallenge.id)}">${mainChallenge.checks && mainChallenge.checks[today] ? "Готово" : "Выполнено"}</button>` : ""}
       </div>` : ""}
       ${counterCards}
     </div>
+    ${otherChallenges.length ? `<div class="today-challenge-list">${otherChallenges.map((ch) => challengeCardHtml(ch, { compact: true })).join("")}</div>` : ""}
 
     <div class="card">
       <div class="weigh-head">
@@ -471,6 +586,23 @@ function renderToday() {
     calendarOpen = true;
     renderToday();
   });
+  screens.today.querySelectorAll("[data-open-challenge]").forEach((el) =>
+    el.addEventListener("click", () => {
+      challengeDetailId = el.dataset.openChallenge;
+      challengeStartDraft = null;
+      show("challenges");
+    })
+  );
+  screens.today.querySelectorAll("[data-challenge-check]").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const st = store.get();
+      if (toggleChallengeCheck(st, btn.dataset.challengeCheck, today)) {
+        saveState(st);
+        renderToday();
+      }
+    })
+  );
   wireDayCalendar();
   renderWorkouts();
   renderMeasurements();
@@ -479,8 +611,8 @@ function renderToday() {
   renderNote();
 }
 
-function renderDetailShell({ title, sub, accent, bodyId }) {
-  screens.today.innerHTML = `
+function renderDetailShell({ title, sub, accent, bodyId, screen = screens.today, onBack }) {
+  screen.innerHTML = `
     <div class="detail-top">
       <button class="navbtn detail-back" id="detail-back" aria-label="Назад">${ICON.chevL}</button>
       <div>
@@ -491,7 +623,11 @@ function renderDetailShell({ title, sub, accent, bodyId }) {
     <div class="detail-accent ${accent || ""}"></div>
     <div id="${bodyId}"></div>
   `;
-  document.getElementById("detail-back").addEventListener("click", () => {
+  screen.querySelector("#detail-back").addEventListener("click", () => {
+    if (onBack) {
+      onBack();
+      return;
+    }
     todayRoute = "main";
     addingMeal = null;
     selectedFood = null;
@@ -726,7 +862,8 @@ function dayHasActivity(state, iso) {
   const hasNutrition = !!(d && L.dayNutritionTotals(d).kcal);
   const hasWeight = (state.weighIns || []).some((w) => w.date === iso);
   const hasMeasurement = ensureMeasurements(state).some((m) => m.date === iso);
-  return hasWorkout || hasHabit || hasNote || hasNutrition || hasWeight || hasMeasurement;
+  const hasChallenge = ensureChallenges(state).some((ch) => ch.checks && ch.checks[iso] === true);
+  return hasWorkout || hasHabit || hasNote || hasNutrition || hasWeight || hasMeasurement || hasChallenge;
 }
 
 function dayActivityLevel(state, iso) {
@@ -737,6 +874,7 @@ function dayActivityLevel(state, iso) {
   if (L.dayNutritionTotals(d).kcal) level += 1;
   if ((state.weighIns || []).some((w) => w.date === iso)) level += 1;
   if (ensureMeasurements(state).some((m) => m.date === iso)) level += 1;
+  if (ensureChallenges(state).some((ch) => ch.checks && ch.checks[iso] === true)) level += 1;
   return Math.min(3, level);
 }
 
@@ -1757,6 +1895,211 @@ function celebrate() {
   setTimeout(() => layer.remove(), 1700);
 }
 
+// ---------- Экран «Челленджи» ----------
+function renderChallenges() {
+  if (challengeStartDraft) {
+    renderChallengeStart();
+    return;
+  }
+  if (challengeDetailId) {
+    renderChallengeDetail(challengeDetailId);
+    return;
+  }
+  const s = store.get();
+  const month = new Date().getMonth() + 1;
+  const mine = ensureChallenges(s);
+  const active = mine.filter((ch) => challengeDisplayStatus(ch, todayISO()) === "active");
+  const archived = mine.filter((ch) => challengeDisplayStatus(ch, todayISO()) !== "active").slice(0, 4);
+  const trending = CHALLENGE_TEMPLATES.filter((template) => (template.trend || []).includes(month));
+  const popular = CHALLENGE_TEMPLATES.filter((template) => !(template.trend || []).includes(month));
+  screens.challenges.innerHTML = `
+    <h1>Челленджи</h1>
+    <section class="challenge-section">
+      <div class="section-head"><div class="title">Активные</div></div>
+      ${active.length ? `<div class="challenge-stack">${active.map((ch) => challengeCardHtml(ch)).join("")}</div>` : `<div class="card empty-challenge">Нет активных челленджей</div>`}
+    </section>
+    ${archived.length ? `<section class="challenge-section">
+      <div class="section-head"><div class="title">История</div></div>
+      <div class="challenge-stack">${archived.map((ch) => challengeCardHtml(ch, { compact: true })).join("")}</div>
+    </section>` : ""}
+    <section class="challenge-section">
+      <div class="section-head"><div class="title">Сейчас в тренде</div></div>
+      <div class="template-row">${trending.map((template) => templateCardHtml(template)).join("")}</div>
+    </section>
+    <section class="challenge-section">
+      <div class="section-head"><div class="title">Популярные</div></div>
+      <div class="template-grid">${popular.map((template) => templateCardHtml(template, true)).join("")}</div>
+    </section>
+    <button class="btn challenge-custom" data-template="custom">Свой челлендж</button>
+  `;
+  wireChallengeList();
+}
+
+function wireChallengeList() {
+  screens.challenges.querySelectorAll("[data-open-challenge]").forEach((card) =>
+    card.addEventListener("click", () => {
+      challengeDetailId = card.dataset.openChallenge;
+      challengeStartDraft = null;
+      renderChallenges();
+    })
+  );
+  screens.challenges.querySelectorAll("[data-challenge-check]").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const st = store.get();
+      if (toggleChallengeCheck(st, btn.dataset.challengeCheck, todayISO())) {
+        saveState(st);
+        renderChallenges();
+      }
+    })
+  );
+  screens.challenges.querySelectorAll("[data-template]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      challengeStartDraft = { templateId: btn.dataset.template };
+      challengeDetailId = null;
+      renderChallenges();
+    })
+  );
+}
+
+function startTemplate() {
+  if (!challengeStartDraft || challengeStartDraft.templateId === "custom") {
+    return { id: "custom", name: "", days: 30, strict: false, accent: "focus", rules: [] };
+  }
+  return challengeTemplateById(challengeStartDraft.templateId) || CHALLENGE_TEMPLATES[0];
+}
+
+function renderChallengeStart() {
+  const template = startTemplate();
+  renderDetailShell({
+    title: template.id === "custom" ? "Свой челлендж" : template.name,
+    sub: "Новый челлендж",
+    accent: "challenge",
+    bodyId: "challenge-start",
+    screen: screens.challenges,
+    onBack: () => {
+      challengeStartDraft = null;
+      renderChallenges();
+    },
+  });
+  document.getElementById("challenge-start").innerHTML = `
+    <div class="detail-panel challenge-form">
+      <label class="onboard-field">Название<input id="ch-name" value="${esc(template.name || "")}" placeholder="Например, Месяц режима"></label>
+      <div class="onboard-grid">
+        <label class="onboard-field">Дней<input id="ch-days" type="number" min="1" max="365" value="${esc(template.days || 30)}"></label>
+        <label class="onboard-field">Старт<input id="ch-start" type="date" value="${todayISO()}"></label>
+      </div>
+      <label class="field toggle-field">Жёсткий режим
+        <input type="checkbox" id="ch-strict" ${template.strict ? "checked" : ""}>
+      </label>
+      <label class="onboard-field">Правила
+        <textarea id="ch-rules" rows="6" placeholder="Каждое правило с новой строки">${esc((template.rules || []).join("\n"))}</textarea>
+      </label>
+      <button class="btn" id="ch-start-btn">Начать</button>
+    </div>`;
+  document.getElementById("ch-start-btn").addEventListener("click", () => {
+    const st = store.get();
+    const challenge = templateToChallenge(template, {
+      name: document.getElementById("ch-name").value,
+      durationDays: document.getElementById("ch-days").value,
+      startDate: document.getElementById("ch-start").value,
+      strict: document.getElementById("ch-strict").checked,
+      rulesText: document.getElementById("ch-rules").value,
+    });
+    ensureChallenges(st).push(challenge);
+    saveState(st);
+    challengeDetailId = challenge.id;
+    challengeStartDraft = null;
+    renderChallenges();
+  });
+}
+
+function renderChallengeDetail(id) {
+  const s = store.get();
+  const challenge = ensureChallenges(s).find((ch) => ch.id === id);
+  if (!challenge) {
+    challengeDetailId = null;
+    renderChallenges();
+    return;
+  }
+  const today = todayISO();
+  const duration = Number(challenge.durationDays || 1) || 1;
+  const done = L.challengeCompletedCount(challenge);
+  const streak = L.challengeStreak(challenge, today);
+  const status = challengeDisplayStatus(challenge, today);
+  const statusText = status === "done" ? "Завершён" : status === "failed" ? "Провален" : status === "stopped" ? "Остановлен" : `День ${challengeDayProgress(challenge, today)} из ${duration}`;
+  const checked = challenge.checks && challenge.checks[today] === true;
+  renderDetailShell({
+    title: challenge.name,
+    sub: statusText,
+    accent: "challenge",
+    bodyId: "challenge-detail",
+    screen: screens.challenges,
+    onBack: () => {
+      challengeDetailId = null;
+      renderChallenges();
+    },
+  });
+  const cells = L.challengeDates(challenge)
+    .map((iso, index) => {
+      const isDone = challenge.checks && challenge.checks[iso] === true;
+      const missed = iso < today && !isDone;
+      const future = iso > today;
+      return `<span class="challenge-day ${isDone ? "done" : ""} ${missed ? "missed" : ""} ${future ? "future" : ""} ${iso === today ? "today" : ""}" title="${shortDate(iso)}">${index + 1}</span>`;
+    })
+    .join("");
+  document.getElementById("challenge-detail").innerHTML = `
+    <div class="challenge-detail-hero accent-${challengeAccent(challenge)}" style="--challenge-progress:${challengePercent(challenge, today)}deg">
+      <div class="challenge-ring big"><span>${challengeDayProgress(challenge, today)}</span></div>
+      <div>
+        <div class="challenge-title">${esc(challenge.name)}</div>
+        <div class="challenge-meta">${done} из ${duration} выполнено · стрик ${streak}</div>
+      </div>
+    </div>
+    <button class="btn challenge-done ${checked ? "blue" : ""}" id="challenge-toggle-today" ${challengeCanCheck(challenge, today) || checked ? "" : "disabled"}>${checked ? "Сегодня выполнено" : "Отметить сегодня"}</button>
+    <section class="card challenge-calendar-card">
+      <div class="section-head"><div class="title">Календарь</div></div>
+      <div class="challenge-calendar" style="--challenge-days:${duration}">${cells}</div>
+    </section>
+    <section class="card challenge-rules">
+      <div class="section-head"><div class="title">Правила</div></div>
+      ${(challenge.rules || []).length ? `<ul>${challenge.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>` : `<div class="empty-hint">Правила не заданы</div>`}
+    </section>
+    <div class="challenge-actions">
+      <button class="btn ghost" id="challenge-share">Бросить вызов другу</button>
+      ${status === "failed" ? `<button class="btn blue" id="challenge-restart">Начать заново</button>` : ""}
+      ${status === "active" ? `<button class="btn danger" id="challenge-stop">Остановить</button>` : ""}
+    </div>
+  `;
+  document.getElementById("challenge-toggle-today").addEventListener("click", () => {
+    const st = store.get();
+    if (toggleChallengeCheck(st, id, today)) {
+      saveState(st);
+      renderChallengeDetail(id);
+    }
+  });
+  document.getElementById("challenge-share").addEventListener("click", () => notify("Комнаты и ссылки добавлю следующим этапом", "warn"));
+  const restart = document.getElementById("challenge-restart");
+  if (restart) restart.addEventListener("click", () => {
+    const st = store.get();
+    const ch = ensureChallenges(st).find((item) => item.id === id);
+    ch.startDate = today;
+    ch.checks = {};
+    ch.status = "active";
+    saveState(st);
+    renderChallengeDetail(id);
+  });
+  const stop = document.getElementById("challenge-stop");
+  if (stop) stop.addEventListener("click", () => {
+    if (!confirm("Остановить челлендж?")) return;
+    const st = store.get();
+    const ch = ensureChallenges(st).find((item) => item.id === id);
+    ch.status = "stopped";
+    saveState(st);
+    renderChallengeDetail(id);
+  });
+}
+
 // ---------- Экран «Статистика» ----------
 function rangeDays(endISO, count) {
   const days = [];
@@ -1893,6 +2236,26 @@ function habitHeatmapHtml(state, dates) {
   </section>`;
 }
 
+function challengeStatsHtml(state) {
+  const challenges = ensureChallenges(state);
+  if (!challenges.length) return "";
+  const today = todayISO();
+  const completed = challenges.filter((ch) => challengeDisplayStatus(ch, today) === "done").length;
+  const active = challenges.filter((ch) => challengeDisplayStatus(ch, today) === "active").length;
+  const bestStreak = challenges.reduce((best, ch) => Math.max(best, L.challengeStreak(ch, today)), 0);
+  return `<section class="card stat-card challenge-stat">
+    <div class="stat-card-head">
+      <div class="title">Челленджи</div>
+      <div class="stat-pill" style="--pill-color:var(--blue)">${active} активн.</div>
+    </div>
+    <div class="stat-tiles">
+      ${statTile("Завершено", completed, "всего")}
+      ${statTile("Лучший стрик", bestStreak, "дней")}
+      ${statTile("Всего", challenges.length, "челленджей")}
+    </div>
+  </section>`;
+}
+
 function renderStats() {
   const s = store.get();
   const count = statsWindowSize();
@@ -1996,6 +2359,7 @@ function renderStats() {
         <span>${prevLabel}</span>
       </div>
     </section>
+    ${challengeStatsHtml(s)}
     ${exBlocks}
     ${habitHeatmapHtml(s, dates)}
     <section class="card stat-card">
@@ -2083,27 +2447,12 @@ function renderCounterSettings(counters) {
 function renderSettings() {
   const s = store.get();
   if (!Array.isArray(s.settings.counters)) s.settings.counters = [];
-  if (!s.settings.challenge) s.settings.challenge = { enabled: false, startDate: todayISO(), anchorDate: todayISO(), remainingAtAnchor: 75, targetDays: 75, photoUrl: "" };
-  const ch = s.settings.challenge;
   screens.settings.innerHTML = `
     <h1>Настройки</h1>
     <div class="card">
       <div class="eyebrow">Карточки-счётчики</div>
       <div id="counter-list">${renderCounterSettings(s.settings.counters)}</div>
       <button class="btn ghost" id="add-counter">Добавить счётчик</button>
-    </div>
-    <div class="card">
-      <div class="eyebrow">Челлендж</div>
-      <label class="field toggle-field">Участвовать
-        <input type="checkbox" id="set-ch-enabled" ${ch.enabled ? "checked" : ""}>
-      </label>
-      <div class="field">Старт (день 1)<input type="date" id="set-ch-start" value="${esc(ch.startDate || todayISO())}"></div>
-      <div class="field">Якорь отсчёта<input type="date" id="set-ch-anchor" value="${esc(ch.anchorDate || todayISO())}"></div>
-      <div class="field">Остаток на якоре<input type="number" id="set-ch-rem" value="${esc(ch.remainingAtAnchor || 75)}"></div>
-      <div class="field">Дней всего<input type="number" id="set-ch-target" value="${esc(ch.targetDays || 75)}"></div>
-      <div class="field">Фото фона<input type="url" id="set-ch-photo" value="${esc(ch.photoUrl || "")}" placeholder="https://... или выбери файл"></div>
-      <button class="btn ghost" id="set-ch-photo-file">Выбрать фото</button>
-      <input type="file" id="ch-photo-file" accept="image/*" hidden>
     </div>
     <div class="card">
       <div class="eyebrow">Взвешивание</div>
@@ -2135,12 +2484,6 @@ function wireSettings() {
       .filter((c) => c.name && c.startDate);
     s.settings.noAlcoholStart = (s.settings.counters.find((c) => c.id === "no-alcohol") || {}).startDate || s.settings.noAlcoholStart;
     s.settings.noSpraysStart = (s.settings.counters.find((c) => c.id === "no-sprays") || {}).startDate || s.settings.noSpraysStart;
-    s.settings.challenge.enabled = document.getElementById("set-ch-enabled").checked;
-    s.settings.challenge.startDate = document.getElementById("set-ch-start").value;
-    s.settings.challenge.anchorDate = document.getElementById("set-ch-anchor").value;
-    s.settings.challenge.remainingAtAnchor = parseInt(document.getElementById("set-ch-rem").value, 10);
-    s.settings.challenge.targetDays = parseInt(document.getElementById("set-ch-target").value, 10) || 75;
-    s.settings.challenge.photoUrl = document.getElementById("set-ch-photo").value.trim();
     s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;
     s.settings.weighIn.intervalDays = parseInt(document.getElementById("set-w-int").value, 10);
     saveState(s);
@@ -2160,17 +2503,6 @@ function wireSettings() {
       renderSettings();
     })
   );
-  document.getElementById("set-ch-photo-file").addEventListener("click", () => document.getElementById("ch-photo-file").click());
-  document.getElementById("ch-photo-file").addEventListener("change", async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    try {
-      document.getElementById("set-ch-photo").value = await readImageDataUrl(file, 1200, 0.78);
-    } catch {
-      alert("Не удалось обработать фото");
-    }
-  });
-
   renderEditableList("ex-list", "exercises", "add-ex-preset");
   renderEditableList("habit-list", "habits", "add-habit");
   renderWeighList();

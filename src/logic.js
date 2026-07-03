@@ -39,6 +39,59 @@ export function challengeDayNumber(challenge, todayISO) {
   return daysSince(start, todayISO) + 1;
 }
 
+export function challengeEndDate(challenge) {
+  return addDays(challenge.startDate || challenge.anchorDate, (Number(challenge.durationDays || challenge.targetDays) || 1) - 1);
+}
+
+export function challengeDates(challenge) {
+  const duration = Number(challenge.durationDays || challenge.targetDays) || 1;
+  const start = challenge.startDate || challenge.anchorDate;
+  return Array.from({ length: duration }, (_, i) => addDays(start, i));
+}
+
+export function challengeCompletedCount(challenge) {
+  const checks = challenge.checks || {};
+  return challengeDates(challenge).filter((iso) => checks[iso] === true).length;
+}
+
+export function challengeStreak(challenge, refISO) {
+  const checks = challenge.checks || {};
+  const start = challenge.startDate || challenge.anchorDate;
+  const end = challengeEndDate(challenge);
+  const done = (iso) => daysBetween(start, iso) >= 0 && daysBetween(iso, end) >= 0 && checks[iso] === true;
+  let cursor = done(refISO) ? refISO : addDays(refISO, -1);
+  if (!done(cursor)) return 0;
+  let streak = 0;
+  while (done(cursor)) {
+    streak += 1;
+    cursor = addDays(cursor, -1);
+  }
+  return streak;
+}
+
+export function challengeHasStrictFailure(challenge, refISO) {
+  if (!challenge.strict) return false;
+  const start = challenge.startDate || challenge.anchorDate;
+  const duration = Number(challenge.durationDays || challenge.targetDays) || 1;
+  const lastPast = addDays(refISO, -1);
+  for (let i = 0; i < duration; i++) {
+    const iso = addDays(start, i);
+    if (daysBetween(iso, lastPast) < 0) break;
+    if (challenge.checks && challenge.checks[iso] === true) continue;
+    return true;
+  }
+  return false;
+}
+
+export function challengeStatus(challenge, refISO) {
+  if (!challenge) return "stopped";
+  if (challenge.status && challenge.status !== "active") return challenge.status;
+  if (challengeHasStrictFailure(challenge, refISO)) return "failed";
+  const end = challengeEndDate(challenge);
+  if (daysBetween(end, refISO) >= 0 && challenge.checks && challenge.checks[end] === true) return "done";
+  return "active";
+}
+
 export function daysSince(startISO, todayISO) {
   return Math.max(0, daysBetween(startISO, todayISO));
 }
@@ -159,6 +212,7 @@ export function defaultState() {
       challenge: { anchorDate: today, remainingAtAnchor: 75, startDate: today, targetDays: 75, enabled: false, photoUrl: "" },
       weighIn: { anchorDate: today, intervalDays: 14 },
     },
+    challenges: [],
     exercises: [],
     habits: [],
     weighIns: [],

@@ -7,6 +7,10 @@ import {
   daysBetween,
   challengeRemaining,
   challengeDayNumber,
+  challengeCompletedCount,
+  challengeStreak,
+  challengeHasStrictFailure,
+  challengeStatus,
   daysSince,
   isWeighInDay,
   nextWeighInDate,
@@ -66,6 +70,41 @@ test("номер дня челленджа считается от startDate (д
 test("номер дня челленджа: fallback на anchorDate без startDate", () => {
   assert.equal(challengeDayNumber(challenge, "2026-06-22"), 1);
   assert.equal(challengeDayNumber(challenge, "2026-06-25"), 4);
+});
+
+test("челлендж считает выполненные дни и стрик", () => {
+  const ch = {
+    startDate: "2026-06-21",
+    durationDays: 7,
+    status: "active",
+    checks: { "2026-06-21": true, "2026-06-23": true, "2026-06-24": true },
+  };
+  assert.equal(challengeCompletedCount(ch), 3);
+  assert.equal(challengeStreak(ch, "2026-06-24"), 2);
+  assert.equal(challengeStreak(ch, "2026-06-25"), 2);
+});
+
+test("жёсткий челлендж проваливается при пропуске прошедшего дня", () => {
+  const ch = {
+    startDate: "2026-06-21",
+    durationDays: 7,
+    strict: true,
+    status: "active",
+    checks: { "2026-06-21": true, "2026-06-23": true },
+  };
+  assert.equal(challengeHasStrictFailure(ch, "2026-06-24"), true);
+  assert.equal(challengeStatus(ch, "2026-06-24"), "failed");
+});
+
+test("челлендж завершается, когда последний день отмечен", () => {
+  const ch = {
+    startDate: "2026-06-21",
+    durationDays: 3,
+    strict: false,
+    status: "active",
+    checks: { "2026-06-23": true },
+  };
+  assert.equal(challengeStatus(ch, "2026-06-23"), "done");
 });
 
 test("daysSince считает прошедшие дни", () => {
@@ -213,6 +252,7 @@ test("дефолтный стейт — чистый новый аккаунт",
   assert.deepEqual(s.exercises, []);
   assert.deepEqual(s.weighIns, []);
   assert.deepEqual(s.measurements, []);
+  assert.deepEqual(s.challenges, []);
   assert.deepEqual(s.days, {});
 });
 
@@ -357,6 +397,33 @@ test("get() не очищает старый персональный сид у 
   assert.equal(s.habits.length, 4);
   assert.equal(s.exercises.length, 2);
   assert.equal(s.weighIns[0].weight, 78.8);
+});
+
+test("get() мигрирует старый settings.challenge в state.challenges", () => {
+  const ls = memStorage();
+  const today = toISO(new Date());
+  const startDate = addDays(today, -4);
+  const legacy = defaultState();
+  legacy.settings.profile = { name: "Артем", height: null, weight: null, photo: "", measurements: {} };
+  legacy.settings.challenge = {
+    enabled: true,
+    startDate,
+    anchorDate: startDate,
+    remainingAtAnchor: 75,
+    targetDays: 75,
+    photoUrl: "data:image/jpeg;base64,test",
+  };
+  delete legacy.challenges;
+  ls.setItem("tracker.state.v2", JSON.stringify(legacy));
+  const store = createStore(ls);
+  const migrated = store.get();
+  assert.equal(migrated.challenges.length, 1);
+  assert.equal(migrated.challenges[0].name, "Челлендж 75");
+  assert.equal(migrated.challenges[0].durationDays, 75);
+  assert.equal(migrated.challenges[0].startDate, startDate);
+  assert.equal(migrated.challenges[0].photoUrl, "data:image/jpeg;base64,test");
+  assert.equal(challengeDayNumber(migrated.challenges[0], today), 5);
+  assert.equal(challengeCompletedCount(migrated.challenges[0]), 4);
 });
 
 // --- Синхронизация ---
