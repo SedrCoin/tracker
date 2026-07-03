@@ -7,7 +7,7 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-7";
+const APP_VERSION = "20260703-8";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -39,6 +39,32 @@ let manualOpen = false;
 function saveState(state) {
   store.set(state);
   schedulePush();
+}
+
+let toastTimer = null;
+function notify(message, type = "ok") {
+  let el = document.getElementById("app-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "app-toast";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+  }
+  el.className = `app-toast ${type}`;
+  el.textContent = message;
+  clearTimeout(toastTimer);
+  requestAnimationFrame(() => el.classList.add("show"));
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+function friendlySaveError(err) {
+  const message = String((err && err.message) || err || "");
+  if (err && (err.name === "QuotaExceededError" || err.code === 22)) return "Фото слишком тяжёлое для памяти браузера. Попробуй другое или меньше.";
+  if (/413|too large/i.test(message)) return "Сохранено на телефоне, но сервер не принял размер данных. Нужно уменьшить фото или поднять лимит API.";
+  if (/401|unauthorized/i.test(message)) return "Сохранено на телефоне, но сервер не принял токен. Нужно заново войти или проверить ключ.";
+  if (/Failed to fetch|NetworkError|offline|sync failed/i.test(message)) return "Сохранено на телефоне, но сервер сейчас недоступен.";
+  return "Не удалось сохранить профиль. Попробуй ещё раз.";
 }
 
 function syncStatusLabel() {
@@ -85,7 +111,7 @@ function schedulePush() {
   clearTimeout(pushTimer);
   pushTimer = setTimeout(pushNow, 800);
 }
-async function pushNow() {
+async function pushNow(options = {}) {
   if (!Sync.isConfigured(syncCfg)) return;
   setSyncStatus("syncing");
   try {
@@ -93,8 +119,9 @@ async function pushNow() {
     const { updatedAt } = await client.push(store.get(), store.getMeta().updatedAt);
     store.applyRemote(store.get(), updatedAt); // выровнять локальный updatedAt по серверному
     setSyncStatus("ok");
-  } catch {
+  } catch (e) {
     setSyncStatus("offline");
+    if (options.throwOnError) throw e;
   }
 }
 
@@ -599,8 +626,8 @@ function renderProfileEditor() {
       </div>
       <label class="onboard-field">Имя<input id="profile-name" value="${esc(profile.name || "")}"></label>
       <div class="onboard-grid">
-        <label class="onboard-field">Рост<input id="profile-height" type="number" inputmode="decimal" value="${esc(profile.height || "")}" placeholder="см"></label>
-        <label class="onboard-field">Вес<input id="profile-weight" type="number" step="0.1" inputmode="decimal" value="${esc(profile.weight || "")}" placeholder="кг"></label>
+        <label class="onboard-field">Рост, см<input id="profile-height" type="number" inputmode="decimal" value="${esc(profile.height || "")}" placeholder="178"></label>
+        <label class="onboard-field">Вес, кг<input id="profile-weight" type="number" step="0.1" inputmode="decimal" value="${esc(profile.weight || "")}" placeholder="78.5"></label>
       </div>
       <button class="btn" id="profile-save">Сохранить</button>
     </div>`;
@@ -612,11 +639,12 @@ function renderProfileEditor() {
     try {
       photo = await readImageDataUrl(file, 512, 0.84);
       document.getElementById("profile-photo-preview").innerHTML = `<img src="${esc(photo)}" alt="">`;
-    } catch {
-      alert("Не удалось обработать фото");
+    } catch (e) {
+      notify(friendlySaveError(e), "error");
     }
   });
-  document.getElementById("profile-save").addEventListener("click", () => {
+  document.getElementById("profile-save").addEventListener("click", async () => {
+    const saveBtn = document.getElementById("profile-save");
     const next = store.get();
     const height = parseFloat(document.getElementById("profile-height").value);
     const weight = parseFloat(document.getElementById("profile-weight").value);
@@ -627,11 +655,27 @@ function renderProfileEditor() {
       weight: isFinite(weight) ? Math.round(weight * 10) / 10 : null,
       photo,
     };
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Сохраняю...";
+    let localSaved = false;
     try {
-      saveState(next);
+      store.set(next);
+      localSaved = true;
+      if (Sync.isConfigured(syncCfg)) {
+        await pushNow({ throwOnError: true });
+        notify("Профиль сохранён и синхронизирован", "ok");
+      } else {
+        notify("Профиль сохранён на устройстве", "ok");
+      }
       renderToday();
     } catch (e) {
-      alert("Не удалось сохранить профиль. Попробуй фото поменьше.");
+      notify(friendlySaveError(e), localSaved ? "warn" : "error");
+      if (localSaved) {
+        renderToday();
+        return;
+      }
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Сохранить";
     }
   });
 }
