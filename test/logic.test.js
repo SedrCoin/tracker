@@ -349,7 +349,7 @@ test("get() очищает старый персональный сид у но�
 
 test("get() не очищает старый персональный сид у профиля Артём", () => {
   const ls = memStorage();
-  ls.setItem("tracker.state.v2", JSON.stringify(oldPersonalStarterState("Артём")));
+  ls.setItem("tracker.state.v2", JSON.stringify(oldPersonalStarterState("Артем Седракан")));
   const store = createStore(ls);
   const s = store.get();
   assert.equal(s.settings.counters.length, 2);

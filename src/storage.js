@@ -29,7 +29,8 @@ function normName(name) {
 }
 
 function isOwnerProfile(profile) {
-  return normName(profile && profile.name) === "артем";
+  const name = normName(profile && profile.name);
+  return name.includes("артем") || name.includes("artem");
 }
 
 function sameNumberArray(a, b) {

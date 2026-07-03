@@ -1,9 +1,9 @@
-const CACHE = "tracker-v22";
+const CACHE = "tracker-v23";
 const ASSETS = [
   ".",
   "index.html",
-  "styles.css?v=20260703-11",
-  "src/app.js?v=20260703-11",
+  "styles.css?v=20260703-12",
+  "src/app.js?v=20260703-12",
   "src/logic.js",
   "src/storage.js",
   "src/charts.js",
