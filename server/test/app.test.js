@@ -94,6 +94,62 @@ test("PUT затем GET — роундтрип", async () => {
   });
 });
 
+test("POST /auth/register создаёт пользователя с отдельным state", async () => {
+  await withServer(async (base) => {
+    const reg = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: { name: "Миша", height: 180 }, state: { mine: true } }),
+    });
+    assert.equal(reg.status, 200);
+    const created = await reg.json();
+    assert.ok(created.userId);
+    assert.ok(created.token.startsWith("trk_"));
+    assert.equal(created.profile.name, "Миша");
+
+    const userH = { Authorization: `Bearer ${created.token}` };
+    const get = await (await fetch(`${base}/state`, { headers: userH })).json();
+    assert.deepEqual(get.state, { mine: true });
+
+    await fetch(`${base}/state`, {
+      method: "PUT",
+      headers: { ...userH, "Content-Type": "application/json" },
+      body: JSON.stringify({ state: { mine: false, user: "Миша" }, updatedAt: 1 }),
+    });
+    const userState = await (await fetch(`${base}/state`, { headers: userH })).json();
+    assert.equal(userState.state.user, "Миша");
+
+    const legacyState = await (await fetch(`${base}/state`, { headers: authH })).json();
+    assert.equal(legacyState.state, null);
+  });
+});
+
+test("GET /auth/me отдаёт профиль пользователя", async () => {
+  await withServer(async (base) => {
+    const reg = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: { name: "Аня" }, state: {} }),
+    });
+    const created = await reg.json();
+    const me = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${created.token}` } });
+    assert.equal(me.status, 200);
+    const body = await me.json();
+    assert.equal(body.legacy, false);
+    assert.equal(body.profile.name, "Аня");
+  });
+});
+
+test("POST /backup доступен только legacy token", async () => {
+  await withServer(async (base) => {
+    const noAuth = await fetch(`${base}/backup`, { method: "POST" });
+    assert.equal(noAuth.status, 401);
+    const ok = await fetch(`${base}/backup`, { method: "POST", headers: authH });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true, path: null });
+  });
+});
+
 test("PUT с битым JSON → 400", async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/state`, {

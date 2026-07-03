@@ -30,7 +30,7 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
   const cors = {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
-    "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
   };
 
   return async function handler(req, res) {
@@ -50,13 +50,28 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
       return;
     }
 
+    if (path === "/auth/register") {
+      await handleRegister(req, res, { db, maxBody, cors, allow });
+      return;
+    }
+
+    if (path === "/auth/me") {
+      await handleMe(req, res, { db, token, cors, allow });
+      return;
+    }
+
+    if (path === "/backup") {
+      await handleBackup(req, res, { db, token, cors, allow });
+      return;
+    }
+
     if (path === "/state") {
       await handleState(req, res, { db, token, maxBody, cors, allow });
       return;
     }
 
     if (path === "/foods/search" || path === "/foods/get") {
-      await handleFoods(req, res, { token, fatsecret, cors, allow, path, url });
+      await handleFoods(req, res, { db, token, fatsecret, cors, allow, path, url });
       return;
     }
 
@@ -64,14 +79,93 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
   };
 }
 
-async function handleFoods(req, res, { token, fatsecret, cors, allow, path, url }) {
+async function handleBackup(req, res, { db, token, cors, allow }) {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!allow(ip)) {
+    sendJson(res, 429, { error: "rate limited" }, cors);
+    return;
+  }
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "method not allowed" }, cors);
+    return;
+  }
+  const provided = extractBearer(req.headers["authorization"]);
+  if (!tokenMatches(token, provided)) {
+    sendJson(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  sendJson(res, 200, { ok: true, path: db.backup() }, cors);
+}
+
+async function handleRegister(req, res, { db, maxBody, cors, allow }) {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!allow(ip)) {
+    sendJson(res, 429, { error: "rate limited" }, cors);
+    return;
+  }
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "method not allowed" }, cors);
+    return;
+  }
+  let raw;
+  try {
+    raw = await readBody(req, maxBody);
+  } catch {
+    sendJson(res, 400, { error: "bad body" }, cors);
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    sendJson(res, 400, { error: "invalid json" }, cors);
+    return;
+  }
+  const profile = parsed && parsed.profile;
+  if (!profile || typeof profile.name !== "string" || !profile.name.trim()) {
+    sendJson(res, 400, { error: "missing profile name" }, cors);
+    return;
+  }
+  const cleanProfile = {
+    name: profile.name.trim().slice(0, 80),
+    height: profile.height ? Number(profile.height) : null,
+    weight: profile.weight ? Number(profile.weight) : null,
+    photo: typeof profile.photo === "string" ? profile.photo : "",
+    measurements: profile.measurements && typeof profile.measurements === "object" ? profile.measurements : {},
+  };
+  const now = Date.now();
+  const initialState = parsed.state && typeof parsed.state === "object" ? parsed.state : null;
+  const created = db.createUser(cleanProfile, initialState, now);
+  sendJson(res, 200, created, cors);
+}
+
+async function handleMe(req, res, { db, token, cors, allow }) {
   const ip = req.socket.remoteAddress || "unknown";
   if (!allow(ip)) {
     sendJson(res, 429, { error: "rate limited" }, cors);
     return;
   }
   const provided = extractBearer(req.headers["authorization"]);
-  if (!tokenMatches(token, provided)) {
+  if (tokenMatches(token, provided)) {
+    sendJson(res, 200, { legacy: true, profile: null }, cors);
+    return;
+  }
+  const user = db.getUserByToken(provided);
+  if (!user) {
+    sendJson(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  sendJson(res, 200, { legacy: false, userId: user.id, profile: user.profile }, cors);
+}
+
+async function handleFoods(req, res, { db, token, fatsecret, cors, allow, path, url }) {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!allow(ip)) {
+    sendJson(res, 429, { error: "rate limited" }, cors);
+    return;
+  }
+  const provided = extractBearer(req.headers["authorization"]);
+  if (!tokenMatches(token, provided) && !db.getUserByToken(provided)) {
     sendJson(res, 401, { error: "unauthorized" }, cors);
     return;
   }
@@ -109,13 +203,15 @@ async function handleState(req, res, { db, token, maxBody, cors, allow }) {
   }
 
   const provided = extractBearer(req.headers["authorization"]);
-  if (!tokenMatches(token, provided)) {
+  const legacy = tokenMatches(token, provided);
+  const user = legacy ? null : db.getUserByToken(provided);
+  if (!legacy && !user) {
     sendJson(res, 401, { error: "unauthorized" }, cors);
     return;
   }
 
   if (req.method === "GET") {
-    sendJson(res, 200, db.getState(), cors);
+    sendJson(res, 200, legacy ? db.getState() : db.getUserState(user.id), cors);
     return;
   }
 
@@ -144,7 +240,8 @@ async function handleState(req, res, { db, token, maxBody, cors, allow }) {
     }
     const incoming = Number(parsed.updatedAt) || 0;
     const updatedAt = Math.max(incoming, Date.now());
-    db.setState(parsed.state, updatedAt);
+    if (legacy) db.setState(parsed.state, updatedAt);
+    else db.setUserState(user.id, parsed.state, updatedAt);
     sendJson(res, 200, { updatedAt }, cors);
     return;
   }

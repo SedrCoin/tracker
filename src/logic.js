@@ -140,6 +140,13 @@ export function caloriesPerDay(days) {
     .filter((p) => p.value > 0);
 }
 
+export function lastMeasurementValue(measurements, key, todayISO) {
+  const past = measurements
+    .filter((x) => x[key] != null && daysBetween(x.date, todayISO) >= 0)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  return past.length ? past[0][key] : null;
+}
+
 // --- Дефолтный стейт и стартовые данные ---
 
 export function defaultState() {
@@ -180,12 +187,18 @@ export function defaultState() {
     settings: {
       noAlcoholStart: "2025-09-27",
       noSpraysStart: "2026-05-02",
-      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21" },
+      counters: [
+        { id: "no-alcohol", name: "Без алкоголя", startDate: "2025-09-27", tone: "alco" },
+        { id: "no-sprays", name: "Без спреев", startDate: "2026-05-02", tone: "spray" },
+      ],
+      profile: { name: "", height: null, weight: null, photo: "", measurements: {} },
+      challenge: { anchorDate: "2026-06-22", remainingAtAnchor: 75, startDate: "2026-06-21", targetDays: 75, enabled: true, photoUrl: "" },
       weighIn: { anchorDate: "2026-06-22", intervalDays: 14 },
     },
     exercises: [exTurnik, exBrusya],
     habits,
     weighIns: [{ date: "2026-06-22", weight: 78.8 }],
+    measurements: [],
     days,
   };
 }

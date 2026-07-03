@@ -16,6 +16,7 @@ import {
   totalWorkouts,
   caloriesPerDay,
   dayNutritionTotals,
+  lastMeasurementValue,
   defaultState,
 } from "../src/logic.js";
 import { createStore } from "../src/storage.js";
@@ -189,6 +190,17 @@ test("dayNutritionTotals: старый формат и пустой день", (
   assert.deepEqual(dayNutritionTotals({}), { kcal: 0, p: 0, f: 0, c: 0 });
 });
 
+test("lastMeasurementValue берёт свежий замер на выбранную дату", () => {
+  const measurements = [
+    { date: "2026-06-20", waist: 84, biceps: 35 },
+    { date: "2026-06-25", waist: 82.5 },
+    { date: "2026-07-01", waist: 81 },
+  ];
+  assert.equal(lastMeasurementValue(measurements, "waist", "2026-06-30"), 82.5);
+  assert.equal(lastMeasurementValue(measurements, "biceps", "2026-06-30"), 35);
+  assert.equal(lastMeasurementValue(measurements, "chest", "2026-06-30"), null);
+});
+
 // --- Дефолтный стейт ---
 
 test("дефолтный стейт содержит настройки счётчиков", () => {
@@ -205,6 +217,7 @@ test("4 привычки и 2 пресета-упражнения", () => {
   const s = defaultState();
   assert.equal(s.habits.length, 4);
   assert.equal(s.exercises.filter((e) => e.preset).length, 2);
+  assert.deepEqual(s.measurements, []);
 });
 
 test("сид-данные: тренировки за 21–24.06 и вес 78.8", () => {
@@ -278,6 +291,15 @@ test("get() бэкфиллит challenge.startDate в старом состоя�
   ls.setItem("tracker.state.v2", JSON.stringify(legacy));
   const store = createStore(ls);
   assert.equal(store.get().settings.challenge.startDate, "2026-06-21");
+});
+
+test("get() бэкфиллит measurements в старом состоянии", () => {
+  const ls = memStorage();
+  const legacy = defaultState();
+  delete legacy.measurements;
+  ls.setItem("tracker.state.v2", JSON.stringify(legacy));
+  const store = createStore(ls);
+  assert.deepEqual(store.get().measurements, []);
 });
 
 // --- Синхронизация ---

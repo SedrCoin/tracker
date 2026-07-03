@@ -37,5 +37,19 @@ export function createSyncClient(cfg, fetcher) {
       if (!res.ok) throw new Error("push failed: " + res.status);
       return res.json(); // { updatedAt }
     },
+    async register(profile, state) {
+      const res = await fetcher(`${base}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, state }),
+      });
+      if (!res.ok) throw new Error("register failed: " + res.status);
+      return res.json(); // { userId, token, profile, updatedAt }
+    },
+    async me() {
+      const res = await fetcher(`${base}/auth/me`, { headers });
+      if (!res.ok) throw new Error("me failed: " + res.status);
+      return res.json();
+    },
   };
 }

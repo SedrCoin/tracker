@@ -7,15 +7,29 @@ const store = createStore(window.localStorage);
 
 let syncCfg = Sync.loadSyncConfig(window.localStorage);
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260627-5";
+const APP_VERSION = "20260703-6";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
+let statsEndDay = null;
+let calendarOpen = false;
+let customExerciseOpen = false;
+let chipMenuExerciseId = null;
+let chipRenameOpen = false;
+const collapsedWorkouts = new Set();
+let onboardingStep = 0;
+let onboardingDraft = null;
 
 const MEALS = [
   { key: "breakfast", name: "Завтрак" },
   { key: "lunch", name: "Обед" },
   { key: "dinner", name: "Ужин" },
   { key: "snack", name: "Перекус" },
+];
+const MEASUREMENT_FIELDS = [
+  { key: "biceps", name: "Бицепс", short: "Биц" },
+  { key: "waist", name: "Талия", short: "Тал" },
+  { key: "thigh", name: "Бедро", short: "Бед" },
+  { key: "chest", name: "Грудь", short: "Гр" },
 ];
 let addingMeal = null; // ключ приёма с открытой панелью добавления
 let selectedFood = null; // выбранный из поиска продукт { id, name, per100g }
@@ -99,6 +113,7 @@ const ICON = {
   x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M7 6l1 14h8l1-14"/></svg>`,
+  bell: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>`,
 };
 
 // ---------- Даты ----------
@@ -128,6 +143,21 @@ function challengePhotoIndex(date = new Date()) {
   return Math.floor(date.getHours() / 6);
 }
 
+function accountLabel() {
+  if (Sync.isConfigured(syncCfg)) return "Аккаунт подключён";
+  return "Локальный профиль";
+}
+
+function profileComplete(state) {
+  return !!(state.settings && state.settings.profile && state.settings.profile.name);
+}
+
+function profileAvatar(profile) {
+  if (profile && profile.photo) return `<img src="${esc(profile.photo)}" alt="">`;
+  const letter = ((profile && profile.name) || "?").trim().charAt(0).toUpperCase() || "?";
+  return `<span>${esc(letter)}</span>`;
+}
+
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;")
@@ -147,6 +177,52 @@ function pluralRu(n, one, few, many) {
 function getDay(state, iso) {
   if (!state.days[iso]) state.days[iso] = { workouts: [], habits: {}, note: "" };
   return state.days[iso];
+}
+
+function normalizeId(name, existing = []) {
+  const base =
+    String(name)
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[^a-zа-я0-9]+/gi, "-")
+      .replace(/^-+|-+$/g, "") || "item";
+  let id = base;
+  let n = 1;
+  const used = new Set(existing.map((x) => x.id));
+  while (used.has(id)) id = `${base}-${n++}`;
+  return id;
+}
+
+function sameName(a, b) {
+  return exerciseKey(a) === exerciseKey(b);
+}
+
+function cleanExerciseName(name) {
+  const cleaned = String(name || "")
+    .replace(/[«»"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : "Упражнение";
+}
+
+function exerciseKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[«»"']/g, "")
+    .replace(/[^a-zа-я0-9]+/gi, "");
+}
+
+function uniqueExercises(exercises) {
+  const seen = new Set();
+  return exercises.filter((ex) => {
+    const key = exerciseKey(ex.name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // ---------- Навигация по вкладкам ----------
@@ -169,12 +245,18 @@ document
       addingMeal = null;
       selectedFood = null;
       manualOpen = false;
+      customExerciseOpen = false;
     }
     show(t.dataset.tab);
   }));
 
 // ---------- Экран «Сегодня» ----------
 function renderToday() {
+  const initialState = store.get();
+  if (!profileComplete(initialState)) {
+    renderOnboarding(initialState);
+    return;
+  }
   if (todayRoute === "workouts") {
     renderWorkoutDetailScreen();
     return;
@@ -190,6 +272,7 @@ function renderToday() {
   manualOpen = false;
   const s = store.get();
   const today = todayISO();
+  const profile = s.settings.profile || {};
 
   let big, sub;
   if (currentDay === today) { big = "Сегодня"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
@@ -197,42 +280,54 @@ function renderToday() {
   else if (currentDay === L.addDays(today, 1)) { big = "Завтра"; sub = weekday(currentDay) + ", " + dayMonth(currentDay); }
   else { big = dayMonth(currentDay); sub = weekday(currentDay); }
 
-  const ch = s.settings.challenge;
-  const rem = L.challengeRemaining(ch, today);
-  const dayNo = L.challengeDayNumber(ch, today);
+  const ch = s.settings.challenge || {};
+  const targetDays = ch.targetDays || 75;
+  const rem = ch.enabled ? L.challengeRemaining(ch, today) : 0;
+  const dayNo = ch.enabled ? L.challengeDayNumber(ch, today) : 0;
   const challengePhoto = challengePhotoIndex();
-  const challengeProgress = Math.round(Math.min(1, Math.max(0, dayNo / 75)) * 360);
-  const noAlco = L.daysSince(s.settings.noAlcoholStart, today);
-  const noSpray = L.daysSince(s.settings.noSpraysStart, today);
+  const challengeProgress = Math.round(Math.min(1, Math.max(0, dayNo / targetDays)) * 360);
+  const counters = Array.isArray(s.settings.counters) ? s.settings.counters : [];
+  const customChallengeBg = ch.photoUrl ? `background-image:url("${esc(ch.photoUrl)}")` : "";
+  const counterCards = counters
+    .map((c, i) => {
+      const tone = c.tone || (i % 2 ? "spray" : "alco");
+      const days = L.daysSince(c.startDate, today);
+      return `<div class="counter ${esc(tone)}">
+        <div class="c-label">${esc(c.name)}</div>
+        <div class="c-big">${days}</div>
+        <div class="c-sub">дней · с ${shortDate(c.startDate)}</div>
+      </div>`;
+    })
+    .join("");
 
   const w = s.settings.weighIn;
   const isWeigh = L.isWeighInDay(w, today);
   const nextW = L.nextWeighInDate(w, today);
-  const lastW = L.lastWeighInValue(s.weighIns, today);
+  const lastW = L.lastWeighInValue(s.weighIns, currentDay);
 
   screens.today.innerHTML = `
+    <button class="account-hero" id="open-profile" aria-label="Открыть профиль">
+      <div class="avatar">${profileAvatar(profile)}</div>
+      <div class="account-title">
+        <div class="big">${big}</div>
+        <div class="sub">${sub}</div>
+      </div>
+      <span class="bell-btn" id="account-sync" aria-label="Синхронизировать">${ICON.bell}<i></i></span>
+    </button>
     <div class="day-nav">
       <button class="navbtn" id="day-prev" aria-label="Назад">${ICON.chevL}</button>
-      <div class="label"><div class="big">${big}</div><div class="sub">${sub}</div></div>
+      <button class="calendar-open-btn" id="open-calendar" aria-label="Открыть календарь">${dayMonth(currentDay)}</button>
       <button class="navbtn" id="day-next" aria-label="Вперёд">${ICON.chevR}</button>
     </div>
+    <div id="day-calendar-layer">${calendarOpen ? calendarHtml(s, currentDay) : ""}</div>
 
     <div class="counters">
-      <div class="counter hero challenge-photo-${challengePhoto}" style="--challenge-progress: ${challengeProgress}deg">
+      ${ch.enabled ? `<div class="counter hero challenge-photo-${challengePhoto}" style="--challenge-progress: ${challengeProgress}deg; ${customChallengeBg}">
         <div class="c-label">Челлендж</div>
-        <div class="c-row"><div class="c-big">${rem}</div><div class="c-pill">День ${dayNo} / 75</div></div>
+        <div class="c-row"><div class="c-big">${rem}</div><div class="c-pill">День ${dayNo} / ${targetDays}</div></div>
         <div class="c-sub">осталось дней</div>
-      </div>
-      <div class="counter alco">
-        <div class="c-label">Без алкоголя</div>
-        <div class="c-big">${noAlco}</div>
-        <div class="c-sub">дней · с ${shortDate(s.settings.noAlcoholStart)}</div>
-      </div>
-      <div class="counter spray">
-        <div class="c-label">Без спреев</div>
-        <div class="c-big">${noSpray}</div>
-        <div class="c-sub">дней · с ${shortDate(s.settings.noSpraysStart)}</div>
-      </div>
+      </div>` : ""}
+      ${counterCards}
     </div>
 
     <div class="card">
@@ -250,6 +345,7 @@ function renderToday() {
     </div>
 
     <div id="today-workouts"></div>
+    <div id="today-measurements"></div>
     <div id="today-nutrition"></div>
     <div id="today-habits"></div>
     <div id="today-note"></div>
@@ -258,11 +354,13 @@ function renderToday() {
   document.getElementById("day-prev").addEventListener("click", () => {
     currentDay = L.addDays(currentDay, -1);
     todayRoute = "main";
+    calendarOpen = false;
     renderToday();
   });
   document.getElementById("day-next").addEventListener("click", () => {
     currentDay = L.addDays(currentDay, 1);
     todayRoute = "main";
+    calendarOpen = false;
     renderToday();
   });
 
@@ -271,14 +369,27 @@ function renderToday() {
       const val = parseFloat(document.getElementById("weigh-val").value);
       if (!isFinite(val)) return;
       const st = store.get();
-      st.weighIns = st.weighIns.filter((x) => x.date !== today);
-      st.weighIns.push({ date: today, weight: val });
+      st.weighIns = st.weighIns.filter((x) => x.date !== currentDay);
+      st.weighIns.push({ date: currentDay, weight: val });
       saveState(st);
       renderToday();
     });
   }
 
+  document.getElementById("open-profile").addEventListener("click", () => renderProfileEditor());
+  const accountSync = document.getElementById("account-sync");
+  if (accountSync) accountSync.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await pushNow();
+    renderToday();
+  });
+  document.getElementById("open-calendar").addEventListener("click", () => {
+    calendarOpen = true;
+    renderToday();
+  });
+  wireDayCalendar();
   renderWorkouts();
+  renderMeasurements();
   renderNutrition();
   renderHabits();
   renderNote();
@@ -301,8 +412,290 @@ function renderDetailShell({ title, sub, accent, bodyId }) {
     addingMeal = null;
     selectedFood = null;
     manualOpen = false;
+    customExerciseOpen = false;
     renderToday();
   });
+}
+
+function renderOnboarding(state) {
+  const existing = (state.settings && state.settings.profile) || {};
+  if (!onboardingDraft) onboardingDraft = { name: existing.name || "", height: existing.height || "", weight: existing.weight || "", measurements: {}, photo: existing.photo || "" };
+  const step = Math.max(0, Math.min(2, onboardingStep));
+  const stepBody = [
+    `<div class="onboard-step">
+      <h1>Как тебя зовут?</h1>
+      <p>Имя будет видно в профиле и поможет отделить твои данные от друзей.</p>
+      <label class="onboard-field">Имя
+        <input id="onboard-name" autocomplete="name" value="${esc(onboardingDraft.name)}" placeholder="Артём">
+      </label>
+    </div>`,
+    `<div class="onboard-step">
+      <h1>Рост и вес</h1>
+      <p>Можно пропустить, но с ними прогресс по телу будет полезнее.</p>
+      <div class="onboard-grid big-inputs">
+        <label class="onboard-field">Рост
+          <input id="onboard-height" type="number" inputmode="decimal" placeholder="см" value="${esc(onboardingDraft.height)}">
+        </label>
+        <label class="onboard-field">Вес
+          <input id="onboard-weight" type="number" step="0.1" inputmode="decimal" placeholder="кг" value="${esc(onboardingDraft.weight)}">
+        </label>
+      </div>
+    </div>`,
+    `<div class="onboard-step">
+      <h1>Замеры</h1>
+      <p>Необязательно. Заполни сейчас или добавишь позже на главной.</p>
+      <div class="onboard-grid measure">
+        ${MEASUREMENT_FIELDS.map((f) => `<label class="onboard-field">${esc(f.name)}
+          <input data-onboard-measure="${esc(f.key)}" type="number" step="0.1" inputmode="decimal" placeholder="см" value="${esc(onboardingDraft.measurements[f.key] || "")}">
+        </label>`).join("")}
+      </div>
+    </div>`,
+  ][step];
+  screens.today.innerHTML = `
+    <div class="onboarding">
+      <div class="onboarding-card">
+        <div class="onboard-top-actions">
+          ${step > 0 ? `<button class="mini-link left" id="onboard-back">Назад</button>` : "<span></span>"}
+          ${step > 0 ? `<button class="mini-link" id="onboard-skip">Пропустить</button>` : "<span></span>"}
+        </div>
+        <div class="onboard-progress">
+          ${[0, 1, 2].map((i) => `<span class="${i <= step ? "active" : ""}"></span>`).join("")}
+        </div>
+        ${stepBody}
+        <div class="onboard-actions">
+          <button class="btn" id="onboard-next">${step === 2 ? "Войти" : "Дальше"}</button>
+        </div>
+        <div class="onboard-note" id="onboard-note">${Sync.isConfigured(syncCfg) ? "Создам аккаунт на сервере и включу синхронизацию." : "Пока сохраню профиль локально. Сервер можно подключить в настройках."}</div>
+      </div>
+    </div>`;
+
+  const collectStep = () => {
+    const nameInput = document.getElementById("onboard-name");
+    if (nameInput) onboardingDraft.name = nameInput.value.trim();
+    const heightInput = document.getElementById("onboard-height");
+    if (heightInput) onboardingDraft.height = heightInput.value.trim();
+    const weightInput = document.getElementById("onboard-weight");
+    if (weightInput) onboardingDraft.weight = weightInput.value.trim();
+    document.querySelectorAll("[data-onboard-measure]").forEach((inp) => {
+      onboardingDraft.measurements[inp.dataset.onboardMeasure] = inp.value.trim();
+    });
+  };
+  const finish = async () => {
+    collectStep();
+    if (!onboardingDraft.name) {
+      onboardingStep = 0;
+      renderOnboarding(store.get());
+      setTimeout(() => {
+        const note = document.getElementById("onboard-note");
+        if (note) note.textContent = "Введите имя, чтобы создать профиль.";
+      });
+      return;
+    }
+    const height = parseFloat(onboardingDraft.height);
+    const weight = parseFloat(onboardingDraft.weight);
+    const measurements = {};
+    for (const [key, raw] of Object.entries(onboardingDraft.measurements || {})) {
+      const v = parseFloat(raw);
+      if (isFinite(v)) measurements[key] = Math.round(v * 10) / 10;
+    }
+    const st = store.get();
+    const profile = {
+      name: onboardingDraft.name,
+      height: isFinite(height) ? Math.round(height * 10) / 10 : null,
+      weight: isFinite(weight) ? Math.round(weight * 10) / 10 : null,
+      photo: onboardingDraft.photo || "",
+      measurements,
+    };
+    st.settings.profile = profile;
+    if (profile.weight != null && !(st.weighIns || []).some((w) => w.date === currentDay)) {
+      st.weighIns.push({ date: currentDay, weight: profile.weight });
+    }
+    if (Object.keys(measurements).length) {
+      const list = ensureMeasurements(st);
+      list.push({ date: currentDay, ...measurements });
+    }
+    try {
+      if (Sync.isConfigured(syncCfg)) {
+        const client = Sync.createSyncClient(syncCfg, window.fetch.bind(window));
+        const created = await client.register(profile, st);
+        syncCfg = { ...syncCfg, token: created.token };
+        Sync.saveSyncConfig(window.localStorage, syncCfg);
+        st.settings.profile = created.profile || profile;
+      }
+      saveState(st);
+      await pushNow();
+      onboardingDraft = null;
+      onboardingStep = 0;
+      renderToday();
+    } catch (e) {
+      st.settings.profile = profile;
+      saveState(st);
+      document.getElementById("onboard-note").textContent = "Профиль сохранён локально. Сервер не ответил, синхронизируем позже.";
+      setTimeout(renderToday, 700);
+    }
+  };
+  const next = document.getElementById("onboard-next");
+  next.addEventListener("click", () => {
+    collectStep();
+    if (step === 0 && !onboardingDraft.name) {
+      document.getElementById("onboard-note").textContent = "Введите имя, чтобы продолжить.";
+      return;
+    }
+    if (step < 2) {
+      onboardingStep = step + 1;
+      renderOnboarding(store.get());
+    } else finish();
+  });
+  const back = document.getElementById("onboard-back");
+  if (back) back.addEventListener("click", () => {
+    collectStep();
+    onboardingStep = Math.max(0, step - 1);
+    renderOnboarding(store.get());
+  });
+  const skip = document.getElementById("onboard-skip");
+  if (skip) skip.addEventListener("click", () => {
+    collectStep();
+    if (step < 2) {
+      onboardingStep = step + 1;
+      renderOnboarding(store.get());
+    } else finish();
+  });
+}
+
+function renderProfileEditor() {
+  const st = store.get();
+  const profile = st.settings.profile || {};
+  renderDetailShell({ title: "Аккаунт", sub: accountLabel(), accent: "workout", bodyId: "profile-detail" });
+  document.getElementById("profile-detail").innerHTML = `
+    <div class="detail-panel profile-panel">
+      <div class="profile-photo-row">
+        <div class="avatar big" id="profile-photo-preview">${profileAvatar(profile)}</div>
+        <button class="btn ghost" id="profile-photo-btn">Сменить фото</button>
+        <input type="file" id="profile-photo-file" accept="image/*" hidden>
+      </div>
+      <label class="onboard-field">Имя<input id="profile-name" value="${esc(profile.name || "")}"></label>
+      <div class="onboard-grid">
+        <label class="onboard-field">Рост<input id="profile-height" type="number" inputmode="decimal" value="${esc(profile.height || "")}" placeholder="см"></label>
+        <label class="onboard-field">Вес<input id="profile-weight" type="number" step="0.1" inputmode="decimal" value="${esc(profile.weight || "")}" placeholder="кг"></label>
+      </div>
+      <button class="btn" id="profile-save">Сохранить</button>
+    </div>`;
+  let photo = profile.photo || "";
+  document.getElementById("profile-photo-btn").addEventListener("click", () => document.getElementById("profile-photo-file").click());
+  document.getElementById("profile-photo-file").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      photo = reader.result;
+      document.getElementById("profile-photo-preview").innerHTML = `<img src="${esc(photo)}" alt="">`;
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById("profile-save").addEventListener("click", () => {
+    const next = store.get();
+    const height = parseFloat(document.getElementById("profile-height").value);
+    const weight = parseFloat(document.getElementById("profile-weight").value);
+    next.settings.profile = {
+      ...(next.settings.profile || {}),
+      name: document.getElementById("profile-name").value.trim() || "Профиль",
+      height: isFinite(height) ? Math.round(height * 10) / 10 : null,
+      weight: isFinite(weight) ? Math.round(weight * 10) / 10 : null,
+      photo,
+    };
+    saveState(next);
+    renderToday();
+  });
+}
+
+function ensureMeasurements(state) {
+  if (!Array.isArray(state.measurements)) state.measurements = [];
+  return state.measurements;
+}
+
+function measurementForDate(state, iso) {
+  return ensureMeasurements(state).find((m) => m.date === iso) || null;
+}
+
+function dayHasActivity(state, iso) {
+  const d = state.days[iso];
+  const hasWorkout = !!(d && (d.workouts || []).length);
+  const hasHabit = !!(d && d.habits && Object.values(d.habits).some(Boolean));
+  const hasNote = !!(d && (d.note || "").trim());
+  const hasNutrition = !!(d && L.dayNutritionTotals(d).kcal);
+  const hasWeight = (state.weighIns || []).some((w) => w.date === iso);
+  const hasMeasurement = ensureMeasurements(state).some((m) => m.date === iso);
+  return hasWorkout || hasHabit || hasNote || hasNutrition || hasWeight || hasMeasurement;
+}
+
+function dayActivityLevel(state, iso) {
+  const d = state.days[iso] || {};
+  let level = 0;
+  if ((d.workouts || []).length) level += 1;
+  if (d.habits && Object.values(d.habits).some(Boolean)) level += 1;
+  if (L.dayNutritionTotals(d).kcal) level += 1;
+  if ((state.weighIns || []).some((w) => w.date === iso)) level += 1;
+  if (ensureMeasurements(state).some((m) => m.date === iso)) level += 1;
+  return Math.min(3, level);
+}
+
+function calendarHtml(state, selectedISO) {
+  const selected = L.parseISO(selectedISO);
+  const monthStart = new Date(selected.getFullYear(), selected.getMonth(), 1);
+  const firstGridDay = new Date(monthStart);
+  const mondayOffset = (monthStart.getDay() + 6) % 7;
+  firstGridDay.setDate(monthStart.getDate() - mondayOffset);
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(firstGridDay);
+    d.setDate(firstGridDay.getDate() + i);
+    const iso = L.toISO(d);
+    const inMonth = d.getMonth() === selected.getMonth();
+    const level = dayActivityLevel(state, iso);
+    cells.push(`<button class="day-cell ${inMonth ? "" : "muted"} ${iso === selectedISO ? "selected" : ""} ${level ? `active level-${level}` : ""}" data-cal-day="${iso}">
+      <span>${d.getDate()}</span>
+    </button>`);
+  }
+  return `<div class="calendar-overlay">
+  <div class="calendar-card card">
+    <div class="calendar-head">
+      <button class="navbtn small" id="cal-prev" aria-label="Предыдущий месяц">${ICON.chevL}</button>
+      <div class="calendar-title">${MONTHS[selected.getMonth()]} ${selected.getFullYear()}</div>
+      <button class="navbtn small" id="cal-next" aria-label="Следующий месяц">${ICON.chevR}</button>
+      <button class="calendar-close" id="cal-close" aria-label="Закрыть">${ICON.x}</button>
+    </div>
+    <div class="calendar-weekdays">${["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((d) => `<span>${d}</span>`).join("")}</div>
+    <div class="calendar-grid">${cells.join("")}</div>
+  </div></div>`;
+}
+
+function shiftCalendarMonth(delta) {
+  const d = L.parseISO(currentDay);
+  d.setMonth(d.getMonth() + delta, 1);
+  currentDay = L.toISO(d);
+  calendarOpen = true;
+  renderToday();
+}
+
+function wireDayCalendar() {
+  if (!calendarOpen) return;
+  const prev = document.getElementById("cal-prev");
+  const next = document.getElementById("cal-next");
+  if (prev) prev.addEventListener("click", () => shiftCalendarMonth(-1));
+  if (next) next.addEventListener("click", () => shiftCalendarMonth(1));
+  const close = document.getElementById("cal-close");
+  if (close) close.addEventListener("click", () => {
+    calendarOpen = false;
+    renderToday();
+  });
+  document.querySelectorAll("[data-cal-day]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      currentDay = btn.dataset.calDay;
+      calendarOpen = false;
+      todayRoute = "main";
+      renderToday();
+    })
+  );
 }
 
 function ensureNutrition(day) {
@@ -612,6 +1005,75 @@ function sumSets(sets) {
   return (sets || []).reduce((a, b) => a + b, 0);
 }
 
+function setWeightAt(workout, index) {
+  if (Array.isArray(workout.setWeights) && workout.setWeights[index] != null) {
+    const v = Number(workout.setWeights[index]);
+    return isFinite(v) ? Math.round(v * 10) / 10 : null;
+  }
+  if (workout.weight != null) {
+    const v = Number(workout.weight);
+    return isFinite(v) ? Math.round(v * 10) / 10 : null;
+  }
+  return null;
+}
+
+function hasWorkoutWeights(workout) {
+  if (!workout || workout.type !== "reps") return false;
+  if (workout.weightEnabled) return true;
+  if (workout.weight != null && workout.weight !== "") return true;
+  return Array.isArray(workout.setWeights) && workout.setWeights.some((v) => v != null && v !== "");
+}
+
+function latestWorkoutWeight(workout) {
+  if (Array.isArray(workout.setWeights)) {
+    for (let i = workout.setWeights.length - 1; i >= 0; i--) {
+      const v = setWeightAt(workout, i);
+      if (v != null) return v;
+    }
+  }
+  return setWeightAt(workout, 0);
+}
+
+function lastWorkoutBefore(state, workout, beforeISO) {
+  const id = workout.exerciseId;
+  const key = exerciseKey(workout.name);
+  return Object.keys(state.days || {})
+    .filter((iso) => iso < beforeISO)
+    .sort()
+    .reverse()
+    .flatMap((iso) => ((state.days[iso] && state.days[iso].workouts) || []).map((w) => ({ ...w, date: iso })))
+    .find((w) => w.type === workout.type && ((id && w.exerciseId === id) || exerciseKey(w.name) === key));
+}
+
+function workoutCollapseKey(index) {
+  return `${currentDay}:${index}`;
+}
+
+function workoutSummary(wk) {
+  if (wk.type === "cardio") return (wk.value || "").trim() || "кардио";
+  const sets = wk.sets || [];
+  const total = sumSets(sets);
+  const weights = sets.map((_, i) => setWeightAt(wk, i)).filter((v) => v != null);
+  const maxWeight = weights.length ? Math.max(...weights) : null;
+  const setLine = sets.length ? sets.join("-") : "—";
+  return `${setLine} · ${total} повт.${maxWeight != null ? ` · ${maxWeight} кг` : ""}`;
+}
+
+function renameExerciseInState(state, exerciseId, nextName) {
+  const ex = state.exercises.find((item) => item.id === exerciseId);
+  if (!ex) return;
+  const oldName = ex.name;
+  ex.name = nextName;
+  for (const day of Object.values(state.days || {})) {
+    for (const wk of day.workouts || []) {
+      if (wk.exerciseId === exerciseId || (!wk.exerciseId && sameName(wk.name, oldName))) {
+        wk.exerciseId = exerciseId;
+        wk.name = nextName;
+      }
+    }
+  }
+}
+
 function renderWorkouts() {
   const s = store.get();
   const day = getDay(s, currentDay);
@@ -655,6 +1117,58 @@ function renderWorkouts() {
   });
 }
 
+function renderMeasurements() {
+  const s = store.get();
+  const current = measurementForDate(s, currentDay);
+  const values = MEASUREMENT_FIELDS.map((f) => ({
+    ...f,
+    value: current && current[f.key] != null ? current[f.key] : L.lastMeasurementValue(ensureMeasurements(s), f.key, currentDay),
+    todayValue: current && current[f.key] != null ? current[f.key] : "",
+  }));
+  const rows = values
+    .map(
+      (f) => `<label class="measure-field">
+        <span>${f.name}</span>
+        <input data-measure="${f.key}" type="number" step="0.1" inputmode="decimal" placeholder="${f.value != null ? esc(f.value) : "—"}" value="${esc(f.todayValue)}" />
+        <em>см</em>
+      </label>`
+    )
+    .join("");
+
+  document.getElementById("today-measurements").innerHTML = `
+    <div class="card measurements-card">
+      <div class="section-head"><div class="title">Замеры</div><div class="measure-date">${dayMonth(currentDay)}</div></div>
+      <div class="measure-grid">${rows}</div>
+    </div>`;
+
+  document.querySelectorAll("[data-measure]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const st = store.get();
+      const list = ensureMeasurements(st);
+      let row = list.find((m) => m.date === currentDay);
+      if (!row) {
+        row = { date: currentDay };
+        list.push(row);
+      }
+      const key = inp.dataset.measure;
+      const raw = inp.value.trim().replace(",", ".");
+      if (!raw) delete row[key];
+      else {
+        const val = Math.round(parseFloat(raw) * 10) / 10;
+        if (!isFinite(val)) return;
+        row[key] = val;
+        inp.value = val;
+      }
+      if (MEASUREMENT_FIELDS.every((f) => row[f.key] == null)) {
+        const idx = list.indexOf(row);
+        if (idx >= 0) list.splice(idx, 1);
+      }
+      saveState(st);
+      renderMeasurements();
+    })
+  );
+}
+
 function renderWorkoutDetailScreen() {
   renderDetailShell({ title: "Тренировка", sub: `${weekday(currentDay)}, ${dayMonth(currentDay)}`, accent: "workout", bodyId: "workout-detail" });
   renderWorkoutDetail();
@@ -665,43 +1179,97 @@ function renderWorkoutDetail() {
   const day = getDay(s, currentDay);
   const workouts = day.workouts || [];
   const workoutTotal = workouts.reduce((a, wk) => a + (wk.type === "reps" ? sumSets(wk.sets) : 0), 0);
+  const menuExercise = chipMenuExerciseId ? s.exercises.find((e) => e.id === chipMenuExerciseId) : null;
+  const customForm = customExerciseOpen
+    ? `<div class="custom-ex-form">
+        <input id="custom-ex-name" autocomplete="off" placeholder="Новое упражнение" />
+        <button class="chip add" id="save-custom-ex" aria-label="Добавить упражнение">${ICON.plus}</button>
+        <button class="chip close" id="close-custom-ex" aria-label="Закрыть">${ICON.x}</button>
+      </div>`
+    : `<button class="chip add" id="add-custom">${ICON.plus} своё</button>`;
   const chips =
-    s.exercises
+    uniqueExercises(s.exercises)
       .map((e) => `<button class="chip" data-add-ex="${esc(e.id)}">${esc(e.name)}</button>`)
-      .join("") + `<button class="chip add" id="add-custom">${ICON.plus} своё</button>`;
+      .join("") + customForm;
+  const chipMenu = menuExercise
+    ? `<div class="chip-menu">
+        ${
+          chipRenameOpen
+            ? `<input id="rename-ex-name" value="${esc(menuExercise.name)}" autocomplete="off" />
+               <button class="chip-menu-btn primary" id="rename-ex-save">Готово</button>
+               <button class="chip-menu-btn" id="rename-ex-cancel">Отмена</button>`
+            : `<div class="chip-menu-title">${esc(menuExercise.name)}</div>
+               <button class="chip-menu-btn" id="rename-ex-open">Переименовать</button>
+               <button class="chip-menu-btn danger" id="delete-ex-chip">Удалить</button>`
+        }
+      </div>`
+    : "";
 
   const blocks = workouts
     .map((wk, i) => {
+      const collapsed = collapsedWorkouts.has(workoutCollapseKey(i));
+      const collapseIcon = ICON.chevR;
       if (wk.type === "cardio") {
         return `<div class="ex-block">
-          <div class="ex-head"><span class="ex-name">${esc(wk.name)}</span>
-            <button class="ex-del" data-del-wk="${i}">${ICON.x}</button></div>
-          <input class="cardio-input" data-wk="${i}" value="${esc(wk.value || "")}" placeholder="5 км / 30 мин" />
+          <div class="ex-head">
+            <button class="ex-collapse" data-toggle-wk="${i}" aria-label="${collapsed ? "Развернуть" : "Свернуть"}">
+              <span class="ex-name">${esc(wk.name)}</span>
+              <span class="ex-summary">${esc(workoutSummary(wk))}</span>
+              <span class="ex-caret ${collapsed ? "" : "open"}">${collapseIcon}</span>
+            </button>
+            <button class="ex-del" data-del-wk="${i}">${ICON.x}</button>
+          </div>
+          ${collapsed ? "" : `<input class="cardio-input" data-wk="${i}" value="${esc(wk.value || "")}" placeholder="5 км / 30 мин" />`}
         </div>`;
       }
       const rows = (wk.sets || [])
         .map(
-          (r, si) => `<div class="set-swipe" data-swipe-row>
+          (r, si) => {
+            const weightEnabled = hasWorkoutWeights(wk);
+            const setWeight = setWeightAt(wk, si);
+            return `<div class="set-swipe" data-swipe-row>
             <button class="set-delete" data-delset-wk="${i}" data-delset="${si}">${ICON.trash}<span>Удалить</span></button>
             <div class="set-row" data-swipe-content>
-              <span class="set-idx">Подход ${si + 1}</span>
-              <div class="rep-control">
-                <button class="step minus" data-wk="${i}" data-set="${si}" data-d="-1">−</button>
-                <input class="reps-input" id="val-${i}-${si}" data-wk="${i}" data-set="${si}" type="number" inputmode="numeric" min="0" value="${r}" aria-label="Повторы в подходе ${si + 1}" />
-                <button class="step plus" data-wk="${i}" data-set="${si}" data-d="1">+</button>
+              <div class="set-main ${weightEnabled ? "with-weight" : ""}">
+                <span class="set-idx">${si + 1}</span>
+                <div class="reps-control">
+                  <button class="step minus" data-wk="${i}" data-set="${si}" data-d="-1" aria-label="Уменьшить повторы">−</button>
+                  <input class="reps-input" id="val-${i}-${si}" data-wk="${i}" data-set="${si}" type="number" inputmode="numeric" min="0" value="${r}" aria-label="Повторы в подходе ${si + 1}" />
+                  <button class="step plus" data-wk="${i}" data-set="${si}" data-d="1" aria-label="Увеличить повторы">+</button>
+                </div>
+                ${weightEnabled ? `<span class="set-times">×</span>
+                  <label class="set-weight-chip">
+                    <input data-set-weight-wk="${i}" data-set-weight="${si}" type="number" step="0.5" inputmode="decimal" placeholder="кг" value="${setWeight != null ? esc(setWeight) : ""}" aria-label="Вес в подходе ${si + 1}" />
+                    <span>кг</span>
+                  </label>` : ""}
               </div>
-            </div></div>`
+            </div></div>`;
+          }
         )
         .join("");
+      const weightEnabled = hasWorkoutWeights(wk);
       return `<div class="ex-block">
-        <div class="ex-head"><span class="ex-name">${esc(wk.name)}</span>
-          <button class="ex-del" data-del-wk="${i}">${ICON.x}</button></div>
-        <label class="exercise-weight">Вес, кг
-          <input class="exercise-weight-input" data-weight-wk="${i}" type="number" step="0.5" inputmode="decimal" placeholder="необязательно" value="${wk.weight != null ? esc(wk.weight) : ""}" />
-        </label>
-        <div class="set-rows">${rows}</div>
-        <button class="add-set" data-addset="${i}">Добавить подход</button>
-        <div class="ex-total">Всего: <b id="total-${i}">${sumSets(wk.sets)}</b></div>
+        <div class="ex-head">
+          <button class="ex-collapse" data-toggle-wk="${i}" aria-label="${collapsed ? "Развернуть" : "Свернуть"}">
+            <span class="ex-name">${esc(wk.name)}</span>
+            <span class="ex-summary">${esc(workoutSummary(wk))}</span>
+            <span class="ex-caret ${collapsed ? "" : "open"}">${collapseIcon}</span>
+          </button>
+          <button class="ex-del" data-del-wk="${i}">${ICON.x}</button>
+        </div>
+        ${
+          collapsed
+            ? ""
+            : `<div class="ex-tools">
+                <button class="weight-switch ${weightEnabled ? "active" : ""}" data-toggle-weight="${i}" role="switch" aria-checked="${weightEnabled ? "true" : "false"}">
+                  <span class="switch-track"><span class="switch-knob"></span></span>
+                  <span>С весом</span>
+                </button>
+              </div>
+              <div class="set-rows">${rows}</div>
+              <button class="add-set" data-addset="${i}">+ подход</button>
+              <div class="ex-total">Всего: <b id="total-${i}">${sumSets(wk.sets)}</b></div>`
+        }
       </div>`;
     })
     .join("");
@@ -713,6 +1281,7 @@ function renderWorkoutDetail() {
     </div>
     <div class="detail-panel">
       <div class="chips">${chips}</div>
+      ${chipMenu}
     </div>
     ${blocks || `<div class="detail-panel"><div class="empty-hint">Нажми упражнение выше, чтобы записать подходы.</div></div>`}
   `;
@@ -721,41 +1290,169 @@ function renderWorkoutDetail() {
 }
 
 function wireWorkoutEvents() {
-  document.querySelectorAll("[data-add-ex]").forEach((b) =>
+  document.querySelectorAll("[data-add-ex]").forEach((b) => {
+    let pressTimer = null;
+    const openMenu = (e) => {
+      if (e) e.preventDefault();
+      b.dataset.longPress = "1";
+      chipMenuExerciseId = b.dataset.addEx;
+      chipRenameOpen = false;
+      customExerciseOpen = false;
+      renderWorkoutDetail();
+    };
+    b.addEventListener("pointerdown", () => {
+      b.dataset.longPress = "";
+      pressTimer = setTimeout(openMenu, 520);
+    });
+    b.addEventListener("pointerup", () => clearTimeout(pressTimer));
+    b.addEventListener("pointerleave", () => clearTimeout(pressTimer));
+    b.addEventListener("contextmenu", openMenu);
     b.addEventListener("click", () => {
+      if (b.dataset.longPress === "1") {
+        b.dataset.longPress = "";
+        return;
+      }
       const s = store.get();
       const ex = s.exercises.find((e) => e.id === b.dataset.addEx);
       const day = getDay(s, currentDay);
+      if (!day.workouts) day.workouts = [];
       day.workouts.push(
         ex.type === "cardio"
           ? { exerciseId: ex.id, name: ex.name, type: "cardio", value: "" }
           : { exerciseId: ex.id, name: ex.name, type: "reps", sets: [0] }
       );
       saveState(s);
+      chipMenuExerciseId = null;
+      chipRenameOpen = false;
+      renderWorkoutDetail();
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-wk]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const key = workoutCollapseKey(+b.dataset.toggleWk);
+      if (collapsedWorkouts.has(key)) collapsedWorkouts.delete(key);
+      else collapsedWorkouts.add(key);
       renderWorkoutDetail();
     })
   );
 
-  document.getElementById("add-custom").addEventListener("click", () => {
-    const name = prompt("Название упражнения?");
-    if (!name) return;
-    const isCardio = confirm("Это кардио (бег и т.п.)?  OK — да,  Отмена — подходы.");
-    let weight = null;
-    if (!isCardio) {
-      const rawWeight = prompt("Вес, кг? Можно оставить пустым.");
-      if (rawWeight != null && rawWeight.trim() !== "") {
-        const parsedWeight = parseFloat(rawWeight.replace(",", "."));
-        if (isFinite(parsedWeight)) weight = parsedWeight;
+  document.querySelectorAll("[data-toggle-weight]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const s = store.get();
+      const workout = getDay(s, currentDay).workouts[+b.dataset.toggleWeight];
+      if (!workout) return;
+      const next = !hasWorkoutWeights(workout);
+      workout.weightEnabled = next;
+      if (next && !Array.isArray(workout.setWeights)) workout.setWeights = [];
+      if (!next) {
+        workout.setWeights = [];
+        delete workout.weight;
       }
-    }
-    const s = store.get();
-    const day = getDay(s, currentDay);
-    day.workouts.push(
-      isCardio ? { name, type: "cardio", value: "" } : { name, type: "reps", sets: [0], ...(weight != null ? { weight } : {}) }
-    );
-    saveState(s);
+      saveState(s);
+      renderWorkoutDetail();
+    })
+  );
+
+  const renameOpen = document.getElementById("rename-ex-open");
+  if (renameOpen) renameOpen.addEventListener("click", () => {
+    chipRenameOpen = true;
     renderWorkoutDetail();
   });
+  const renameCancel = document.getElementById("rename-ex-cancel");
+  if (renameCancel) renameCancel.addEventListener("click", () => {
+    chipRenameOpen = false;
+    renderWorkoutDetail();
+  });
+  const renameSave = document.getElementById("rename-ex-save");
+  if (renameSave) renameSave.addEventListener("click", () => {
+    const input = document.getElementById("rename-ex-name");
+    const name = input ? input.value.trim() : "";
+    if (!name || !chipMenuExerciseId) return;
+    const st = store.get();
+    renameExerciseInState(st, chipMenuExerciseId, cleanExerciseName(name));
+    saveState(st);
+    chipRenameOpen = false;
+    chipMenuExerciseId = null;
+    renderWorkoutDetail();
+  });
+  const renameInput = document.getElementById("rename-ex-name");
+  if (renameInput) {
+    renameInput.focus();
+    renameInput.select();
+    renameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const btn = document.getElementById("rename-ex-save");
+        if (btn) btn.click();
+      }
+      if (e.key === "Escape") {
+        chipRenameOpen = false;
+        renderWorkoutDetail();
+      }
+    });
+  }
+  const deleteChip = document.getElementById("delete-ex-chip");
+  if (deleteChip) deleteChip.addEventListener("click", () => {
+    if (!chipMenuExerciseId) return;
+    const st = store.get();
+    st.exercises = st.exercises.filter((e) => e.id !== chipMenuExerciseId);
+    saveState(st);
+    chipMenuExerciseId = null;
+    chipRenameOpen = false;
+    renderWorkoutDetail();
+  });
+
+  const addCustom = document.getElementById("add-custom");
+  if (addCustom) addCustom.addEventListener("click", () => {
+    customExerciseOpen = true;
+    chipMenuExerciseId = null;
+    chipRenameOpen = false;
+    renderWorkoutDetail();
+  });
+  const closeCustom = document.getElementById("close-custom-ex");
+  if (closeCustom) closeCustom.addEventListener("click", () => {
+    customExerciseOpen = false;
+    renderWorkoutDetail();
+  });
+  const saveCustom = document.getElementById("save-custom-ex");
+  if (saveCustom) saveCustom.addEventListener("click", () => {
+    const input = document.getElementById("custom-ex-name");
+    const name = input ? input.value.trim() : "";
+    if (!name) return;
+    const s = store.get();
+    const cleanName = cleanExerciseName(name);
+    let ex = s.exercises.find((item) => sameName(item.name, cleanName));
+    if (!ex) {
+      ex = { id: normalizeId(cleanName, s.exercises), name: cleanName, type: "reps", preset: false };
+      s.exercises.push(ex);
+    }
+    const day = getDay(s, currentDay);
+    if (!day.workouts) day.workouts = [];
+    day.workouts.push(
+      ex.type === "cardio"
+        ? { exerciseId: ex.id, name: ex.name, type: "cardio", value: "" }
+        : { exerciseId: ex.id, name: ex.name, type: "reps", sets: [0], setWeights: [] }
+    );
+    saveState(s);
+    customExerciseOpen = false;
+    renderWorkoutDetail();
+  });
+  const customInput = document.getElementById("custom-ex-name");
+  if (customInput) {
+    customInput.focus();
+    customInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const btn = document.getElementById("save-custom-ex");
+        if (btn) btn.click();
+      }
+      if (e.key === "Escape") {
+        customExerciseOpen = false;
+        renderWorkoutDetail();
+      }
+    });
+  }
 
   // степпер — обновление на месте, без перерисовки
   document.querySelectorAll(".step").forEach((b) =>
@@ -788,8 +1485,14 @@ function wireWorkoutEvents() {
   document.querySelectorAll("[data-addset]").forEach((b) =>
     b.addEventListener("click", () => {
       const s = store.get();
-      const sets = getDay(s, currentDay).workouts[+b.dataset.addset].sets;
+      const workout = getDay(s, currentDay).workouts[+b.dataset.addset];
+      const sets = workout.sets;
       sets.push(sets.length ? sets[sets.length - 1] : 0); // копируем прошлый подход
+      if (hasWorkoutWeights(workout)) {
+        if (!Array.isArray(workout.setWeights)) workout.setWeights = [];
+        const prev = setWeightAt(workout, sets.length - 2);
+        workout.setWeights.push(prev != null ? prev : null);
+      }
       saveState(s);
       renderWorkoutDetail();
     })
@@ -803,19 +1506,22 @@ function wireWorkoutEvents() {
     })
   );
 
-  document.querySelectorAll("input.exercise-weight-input").forEach((inp) =>
+  document.querySelectorAll("input[data-set-weight]").forEach((inp) =>
     inp.addEventListener("change", () => {
       const s = store.get();
-      const workout = getDay(s, currentDay).workouts[+inp.dataset.weightWk];
+      const workout = getDay(s, currentDay).workouts[+inp.dataset.setWeightWk];
+      const setIndex = +inp.dataset.setWeight;
       const raw = inp.value.trim().replace(",", ".");
-      if (!raw) delete workout.weight;
+      if (!Array.isArray(workout.setWeights)) workout.setWeights = [];
+      if (!raw) delete workout.setWeights[setIndex];
       else {
         const weight = parseFloat(raw);
         if (!isFinite(weight)) return;
-        workout.weight = weight;
+        workout.setWeights[setIndex] = Math.round(weight * 10) / 10;
         inp.value = weight;
       }
       saveState(s);
+      renderWorkoutDetail();
     })
   );
 
@@ -837,6 +1543,7 @@ function wireWorkoutEvents() {
       const workout = getDay(s, currentDay).workouts[+b.dataset.delsetWk];
       if (!workout || !workout.sets) return;
       workout.sets.splice(+b.dataset.delset, 1);
+      if (Array.isArray(workout.setWeights)) workout.setWeights.splice(+b.dataset.delset, 1);
       if (!workout.sets.length) workout.sets.push(0);
       saveState(s);
       renderWorkoutDetail();
@@ -956,42 +1663,73 @@ function rangeDays(endISO, count) {
   return days;
 }
 
+function statsWindowSize() {
+  return statsRange === "week" ? 7 : 30;
+}
+
+function statsEndISO() {
+  return statsEndDay || todayISO();
+}
+
+function shiftStatsWindow(delta) {
+  const next = L.addDays(statsEndISO(), delta * statsWindowSize());
+  statsEndDay = next > todayISO() ? todayISO() : next;
+  renderStats();
+}
+
+function statsPeriodLabel(dates) {
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  return first === last ? shortDate(last) : `${dayMonth(first)} — ${shortDate(last)}`;
+}
+
 function chartDayLabel(iso, range) {
   const d = L.parseISO(iso);
   if (range === "week") return ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][d.getDay()];
   return String(d.getDate());
 }
 
+function chartPointLabel(iso, dates) {
+  if (statsRange === "week") return chartDayLabel(iso, statsRange);
+  const i = dates.indexOf(iso);
+  const d = L.parseISO(iso).getDate();
+  return i === 0 || i === dates.length - 1 || d === 1 || d % 5 === 0 ? String(d) : "";
+}
+
 function workoutCountInRange(days, dates) {
   return dates.filter((iso) => days[iso] && (days[iso].workouts || []).length > 0).length;
 }
 
-function exercisePoints(days, exerciseName, dates) {
+function exercisePoints(days, exerciseKeyValue, dates) {
   return dates.map((date) => {
     const workouts = ((days[date] && days[date].workouts) || []).filter(
-      (w) => w.type === "reps" && w.name === exerciseName
+      (w) => w.type === "reps" && exerciseKey(w.name) === exerciseKeyValue
     );
     const value = workouts.reduce((a, w) => a + sumSets(w.sets), 0);
     const sets = workouts.reduce((a, w) => a + ((w.sets && w.sets.length) || 0), 0);
-    const weighted = [...workouts].reverse().find((w) => w.weight != null && isFinite(Number(w.weight)));
+    const weighted = [...workouts].reverse().map(latestWorkoutWeight).find((w) => w != null);
     return {
       date,
-      label: chartDayLabel(date, statsRange),
+      label: chartPointLabel(date, dates),
       value,
       sets,
-      weight: weighted ? Math.round(Number(weighted.weight) * 10) / 10 : null,
+      weight: weighted != null ? weighted : null,
     };
   });
 }
 
-function exerciseNamesInState(days) {
-  return [
-    ...new Set(
-      Object.values(days).flatMap((d) =>
-        (d.workouts || []).filter((w) => w.type === "reps").map((w) => w.name)
-      )
-    ),
-  ];
+function exerciseGroupsInState(days) {
+  const groups = new Map();
+  Object.values(days).forEach((d) => {
+    (d.workouts || [])
+      .filter((w) => w.type === "reps")
+      .forEach((w) => {
+        const key = exerciseKey(w.name);
+        if (!key) return;
+        if (!groups.has(key)) groups.set(key, { key, name: cleanExerciseName(w.name) });
+      });
+  });
+  return [...groups.values()];
 }
 
 function percentDelta(current, previous) {
@@ -1000,15 +1738,65 @@ function percentDelta(current, previous) {
   return Math.round(((current - previous) / previous) * 100);
 }
 
+function deltaClass(value) {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
 function statTile(label, value, sub = "") {
   return `<div class="stat-tile"><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
 }
 
+function nutritionPoints(days, dates) {
+  return dates.map((date) => ({
+    date,
+    label: chartPointLabel(date, dates),
+    ...L.dayNutritionTotals(days[date]),
+  }));
+}
+
+function measurementPoints(measurements, field, dates) {
+  const byDate = new Map((measurements || []).map((m) => [m.date, m]));
+  return dates
+    .map((date) => {
+      const value = byDate.get(date) && byDate.get(date)[field.key];
+      return value == null ? null : { date, label: chartPointLabel(date, dates), value };
+    })
+    .filter(Boolean);
+}
+
+function habitHeatmapHtml(state, dates) {
+  if (!state.habits.length) return "";
+  const rows = state.habits
+    .map((h) => {
+      const doneCount = dates.filter((iso) => state.days[iso] && state.days[iso].habits && state.days[iso].habits[h.id]).length;
+      const cells = dates
+        .map((iso) => {
+          const done = state.days[iso] && state.days[iso].habits && state.days[iso].habits[h.id];
+          return `<span class="heat-cell ${done ? "on" : ""}" title="${esc(h.name)} · ${shortDate(iso)}"></span>`;
+        })
+        .join("");
+      return `<div class="heat-row">
+        <div class="heat-name"><span>${esc(h.name)}</span><b>${doneCount}/${dates.length}</b></div>
+        <div class="heat-cells" style="--heat-count:${dates.length}">${cells}</div>
+      </div>`;
+    })
+    .join("");
+  return `<section class="card stat-card habit-stat">
+    <div class="stat-card-head">
+      <div class="title">Привычки</div>
+      <div class="stat-pill" style="--pill-color:var(--green)">heatmap</div>
+    </div>
+    <div class="habit-heatmap">${rows}</div>
+  </section>`;
+}
+
 function renderStats() {
   const s = store.get();
-  const count = statsRange === "week" ? 7 : 30;
-  const today = todayISO();
-  const dates = rangeDays(today, count);
+  const count = statsWindowSize();
+  const endDay = statsEndISO();
+  const dates = rangeDays(endDay, count);
   const previousDates = rangeDays(L.addDays(dates[0], -1), count);
   const totalWorkouts = workoutCountInRange(s.days, dates);
   const previousWorkouts = workoutCountInRange(s.days, previousDates);
@@ -1016,12 +1804,25 @@ function renderStats() {
   const rangeLabel = statsRange === "week" ? "на этой неделе" : "за 30 дней";
   const prevLabel = statsRange === "week" ? "с прошлой неделей" : "с прошлым периодом";
   const colors = ["#58cc02", "#ff9a00", "#1d73e8", "#a560f0"];
+  const measurementBlocks = MEASUREMENT_FIELDS.map((field, index) => {
+    const points = measurementPoints(ensureMeasurements(s), field, dates);
+    if (!points.length) return "";
+    const color = colors[(index + 1) % colors.length];
+    const latest = points[points.length - 1];
+    return `<section class="card stat-card measurement-stat">
+      <div class="stat-card-head">
+        <div class="title">${esc(field.name)}</div>
+        <div class="stat-pill" style="--pill-color:${color}">${latest.value} см</div>
+      </div>
+      ${Charts.lineChart(points, color)}
+    </section>`;
+  }).join("");
 
-  const exNames = exerciseNamesInState(s.days);
-  const exBlocks = exNames
-    .map((name, index) => {
-      const points = exercisePoints(s.days, name, dates);
-      const previous = exercisePoints(s.days, name, previousDates);
+  const exGroups = exerciseGroupsInState(s.days);
+  const exBlocks = exGroups
+    .map((group, index) => {
+      const points = exercisePoints(s.days, group.key, dates);
+      const previous = exercisePoints(s.days, group.key, previousDates);
       const total = points.reduce((a, p) => a + p.value, 0);
       const totalSets = points.reduce((a, p) => a + p.sets, 0);
       const previousTotal = previous.reduce((a, p) => a + p.value, 0);
@@ -1036,17 +1837,15 @@ function renderStats() {
       if (!total && !weightSeries.length) return "";
       return `<section class="card stat-card exercise-stat">
         <div class="stat-card-head">
-          <div class="title">${esc(name)}</div>
+          <div class="title">${esc(group.name)}</div>
           <div class="stat-pill" style="--pill-color:${color}">Всего: ${total}</div>
         </div>
         ${Charts.barChart(points, color)}
-        <div class="stat-tiles">
-          ${statTile("Среднее", avg, "повт.")}
-          ${statTile("Лучший день", best.value, best.label)}
-          ${statTile("Подходы", totalSets, "за период")}
-        </div>
-        <div class="stat-progress" style="--progress-color:${color}">
-          <b>${delta > 0 ? "+" : ""}${delta}%</b><span>${prevLabel}</span>
+        <div class="stat-micro" style="--progress-color:${color}">
+          <span><b>${avg}</b> ср.</span>
+          <span><b>${best.value}</b> ${best.label}</span>
+          <span><b>${totalSets}</b> подх.</span>
+          <span class="delta ${deltaClass(delta)}"><b>${delta > 0 ? "+" : ""}${delta}%</b></span>
         </div>
         ${
           weightSeries.length
@@ -1074,11 +1873,16 @@ function renderStats() {
 
   screens.stats.innerHTML = `
     <div class="stats-top">
-      <h1>Статистика</h1>
+      <h1>Прогресс</h1>
       <div class="segmented">
         <button class="${statsRange === "week" ? "active" : ""}" data-stats-range="week">Неделя</button>
         <button class="${statsRange === "month" ? "active" : ""}" data-stats-range="month">Месяц</button>
       </div>
+    </div>
+    <div class="stats-period">
+      <button class="navbtn small" id="stats-prev" aria-label="Прошлый период">${ICON.chevL}</button>
+      <div>${statsPeriodLabel(dates)}</div>
+      <button class="navbtn small" id="stats-next" aria-label="Следующий период" ${endDay >= todayISO() ? "disabled" : ""}>${ICON.chevR}</button>
     </div>
     <section class="card stat-summary">
       <div>
@@ -1087,11 +1891,12 @@ function renderStats() {
         <div class="muted-line">${rangeLabel}</div>
       </div>
       <div class="stat-compare">
-        <b>${workoutDelta > 0 ? "+" : ""}${workoutDelta}</b>
+        <b class="${deltaClass(workoutDelta)}">${workoutDelta > 0 ? "+" : ""}${workoutDelta}</b>
         <span>${prevLabel}</span>
       </div>
     </section>
     ${exBlocks}
+    ${habitHeatmapHtml(s, dates)}
     <section class="card stat-card">
       <div class="stat-card-head">
         <div class="title">Вес</div>
@@ -1104,13 +1909,43 @@ function renderStats() {
         ${statTile("Записей", weightSeries.length, "за период")}
       </div>
     </section>
+    ${measurementBlocks}
   `;
   document.querySelectorAll("[data-stats-range]").forEach((btn) =>
     btn.addEventListener("click", () => {
       statsRange = btn.dataset.statsRange;
+      statsEndDay = todayISO();
       renderStats();
     })
   );
+  document.getElementById("stats-prev").addEventListener("click", () => shiftStatsWindow(-1));
+  document.getElementById("stats-next").addEventListener("click", () => {
+    if (statsEndISO() >= todayISO()) return;
+    shiftStatsWindow(1);
+  });
+  wireStatsSwipe();
+}
+
+function wireStatsSwipe() {
+  document.querySelectorAll(".exercise-stat").forEach((card) => {
+    let startX = 0, startY = 0, dx = 0;
+    card.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      dx = 0;
+    }, { passive: true });
+    card.addEventListener("touchmove", (e) => {
+      const t = e.touches[0];
+      dx = t.clientX - startX;
+    }, { passive: true });
+    card.addEventListener("touchend", (e) => {
+      const dy = Math.abs((e.changedTouches[0] && e.changedTouches[0].clientY) - startY);
+      if (Math.abs(dx) < 56 || dy > Math.abs(dx) * 0.8) return;
+      if (dx < 0 && statsEndISO() < todayISO()) shiftStatsWindow(1);
+      if (dx > 0) shiftStatsWindow(-1);
+    });
+  });
 }
 
 function renderHabitCalendar() {
@@ -1134,22 +1969,46 @@ function renderHabitCalendar() {
 }
 
 // ---------- Экран «Настройки» ----------
+function renderCounterSettings(counters) {
+  return (counters || [])
+    .map((c, i) => `<div class="edit-row counter-edit">
+      <input data-counter-name="${i}" value="${esc(c.name)}" placeholder="Название">
+      <input data-counter-date="${i}" type="date" value="${esc(c.startDate)}">
+      <button class="icon-x" data-del-counter="${i}" aria-label="Удалить счётчик">${ICON.x}</button>
+    </div>`)
+    .join("");
+}
+
 function renderSettings() {
   const s = store.get();
+  if (!Array.isArray(s.settings.counters)) s.settings.counters = [];
+  if (!s.settings.challenge) s.settings.challenge = { enabled: false, startDate: todayISO(), anchorDate: todayISO(), remainingAtAnchor: 75, targetDays: 75, photoUrl: "" };
+  const ch = s.settings.challenge;
   screens.settings.innerHTML = `
     <h1>Настройки</h1>
     <div class="card">
-      <div class="eyebrow">Счётчики</div>
-      <div class="field">Без алкоголя с<input type="date" id="set-alco" value="${s.settings.noAlcoholStart}"></div>
-      <div class="field">Без спреев с<input type="date" id="set-spray" value="${s.settings.noSpraysStart}"></div>
-      <div class="field">Челлендж: старт (день 1)<input type="date" id="set-ch-start" value="${s.settings.challenge.startDate}"></div>
-      <div class="field">Челлендж: якорь отсчёта<input type="date" id="set-ch-anchor" value="${s.settings.challenge.anchorDate}"></div>
-      <div class="field">Челлендж: остаток на якоре<input type="number" id="set-ch-rem" value="${s.settings.challenge.remainingAtAnchor}"></div>
+      <div class="eyebrow">Карточки-счётчики</div>
+      <div id="counter-list">${renderCounterSettings(s.settings.counters)}</div>
+      <button class="btn ghost" id="add-counter">Добавить счётчик</button>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Челлендж</div>
+      <label class="field toggle-field">Участвовать
+        <input type="checkbox" id="set-ch-enabled" ${ch.enabled ? "checked" : ""}>
+      </label>
+      <div class="field">Старт (день 1)<input type="date" id="set-ch-start" value="${esc(ch.startDate || todayISO())}"></div>
+      <div class="field">Якорь отсчёта<input type="date" id="set-ch-anchor" value="${esc(ch.anchorDate || todayISO())}"></div>
+      <div class="field">Остаток на якоре<input type="number" id="set-ch-rem" value="${esc(ch.remainingAtAnchor || 75)}"></div>
+      <div class="field">Дней всего<input type="number" id="set-ch-target" value="${esc(ch.targetDays || 75)}"></div>
+      <div class="field">Фото фона<input type="url" id="set-ch-photo" value="${esc(ch.photoUrl || "")}" placeholder="https://... или выбери файл"></div>
+      <button class="btn ghost" id="set-ch-photo-file">Выбрать фото</button>
+      <input type="file" id="ch-photo-file" accept="image/*" hidden>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Взвешивание</div>
       <div class="field">Взвешивание: якорь<input type="date" id="set-w-anchor" value="${s.settings.weighIn.anchorDate}"></div>
       <div class="field">Взвешивание: интервал, дней<input type="number" id="set-w-int" value="${s.settings.weighIn.intervalDays}"></div>
       <button class="btn" id="save-settings">Сохранить</button>
-      <button class="btn ghost" id="reset-alco">Сбросить «без алкоголя» на сегодня</button>
-      <button class="btn ghost" id="reset-spray">Сбросить «без спреев» на сегодня</button>
     </div>
     <div class="card"><div class="eyebrow">Упражнения</div><div id="ex-list"></div>
       <button class="btn ghost" id="add-ex-preset">Добавить упражнение</button></div>
@@ -1157,15 +2016,6 @@ function renderSettings() {
       <button class="btn ghost" id="add-habit">Добавить привычку</button></div>
     <div class="card"><div class="eyebrow">Замеры веса</div><div id="weigh-list"></div>
       <button class="btn ghost" id="add-weigh">Добавить замер</button></div>
-    <div class="card"><div class="eyebrow">Синхронизация · <span id="sync-status">${syncStatusLabel()}</span></div>
-      <div class="field">Адрес API<input type="url" id="sync-url" value="${esc(syncCfg.apiUrl)}" placeholder="https://домен/trackerapi"></div>
-      <div class="field">Ключ<input type="password" id="sync-token" value="${esc(syncCfg.token)}" placeholder="токен"></div>
-      <button class="btn" id="sync-save">Сохранить и синхронизировать</button>
-      <button class="btn ghost" id="sync-now">Синхронизировать сейчас</button></div>
-    <div class="card"><div class="eyebrow">Бэкап</div>
-      <button class="btn blue" id="export">Экспорт в файл</button>
-      <button class="btn ghost" id="import">Импорт из файла</button>
-      <input type="file" id="import-file" accept="application/json" hidden></div>
     <div class="app-version">Версия ${APP_VERSION}</div>
   `;
   wireSettings();
@@ -1175,40 +2025,82 @@ function wireSettings() {
   const today = todayISO();
   document.getElementById("save-settings").addEventListener("click", () => {
     const s = store.get();
-    s.settings.noAlcoholStart = document.getElementById("set-alco").value;
-    s.settings.noSpraysStart = document.getElementById("set-spray").value;
+    s.settings.counters = [...document.querySelectorAll("[data-counter-name]")]
+      .map((inp) => {
+        const i = +inp.dataset.counterName;
+        const startDate = document.querySelector(`[data-counter-date="${i}"]`).value;
+        return { ...(s.settings.counters[i] || {}), id: (s.settings.counters[i] && s.settings.counters[i].id) || normalizeId(inp.value, s.settings.counters), name: inp.value.trim(), startDate, tone: (s.settings.counters[i] && s.settings.counters[i].tone) || (i % 2 ? "spray" : "alco") };
+      })
+      .filter((c) => c.name && c.startDate);
+    s.settings.noAlcoholStart = (s.settings.counters.find((c) => c.id === "no-alcohol") || {}).startDate || s.settings.noAlcoholStart;
+    s.settings.noSpraysStart = (s.settings.counters.find((c) => c.id === "no-sprays") || {}).startDate || s.settings.noSpraysStart;
+    s.settings.challenge.enabled = document.getElementById("set-ch-enabled").checked;
     s.settings.challenge.startDate = document.getElementById("set-ch-start").value;
     s.settings.challenge.anchorDate = document.getElementById("set-ch-anchor").value;
     s.settings.challenge.remainingAtAnchor = parseInt(document.getElementById("set-ch-rem").value, 10);
+    s.settings.challenge.targetDays = parseInt(document.getElementById("set-ch-target").value, 10) || 75;
+    s.settings.challenge.photoUrl = document.getElementById("set-ch-photo").value.trim();
     s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;
     s.settings.weighIn.intervalDays = parseInt(document.getElementById("set-w-int").value, 10);
     saveState(s);
     alert("Сохранено");
   });
-  document.getElementById("reset-alco").addEventListener("click", () => {
-    if (!confirm("Обнулить счётчик «без алкоголя» на сегодня?")) return;
+  document.getElementById("add-counter").addEventListener("click", () => {
     const s = store.get();
-    s.settings.noAlcoholStart = today;
+    s.settings.counters.push({ id: normalizeId("counter", s.settings.counters), name: "Новый счётчик", startDate: today, tone: s.settings.counters.length % 2 ? "spray" : "alco" });
     saveState(s);
     renderSettings();
   });
-  document.getElementById("reset-spray").addEventListener("click", () => {
-    if (!confirm("Обнулить счётчик «без спреев» на сегодня?")) return;
-    const s = store.get();
-    s.settings.noSpraysStart = today;
-    saveState(s);
-    renderSettings();
+  document.querySelectorAll("[data-del-counter]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const s = store.get();
+      s.settings.counters.splice(+btn.dataset.delCounter, 1);
+      saveState(s);
+      renderSettings();
+    })
+  );
+  document.getElementById("set-ch-photo-file").addEventListener("click", () => document.getElementById("ch-photo-file").click());
+  document.getElementById("ch-photo-file").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      document.getElementById("set-ch-photo").value = reader.result;
+    };
+    reader.readAsDataURL(file);
   });
 
   renderEditableList("ex-list", "exercises", "add-ex-preset");
   renderEditableList("habit-list", "habits", "add-habit");
   renderWeighList();
 
-  document.getElementById("export").addEventListener("click", exportData);
-  document.getElementById("import").addEventListener("click", () => document.getElementById("import-file").click());
-  document.getElementById("import-file").addEventListener("change", importData);
+  const exportBtn = document.getElementById("export");
+  if (exportBtn) exportBtn.addEventListener("click", exportData);
+  const serverBackupBtn = document.getElementById("server-backup");
+  if (serverBackupBtn) serverBackupBtn.addEventListener("click", async () => {
+    if (!Sync.isConfigured(syncCfg)) {
+      alert("Сначала подключи синхронизацию.");
+      return;
+    }
+    try {
+      const res = await fetch(syncApiBase() + "/backup", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${syncCfg.token}` },
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = await res.json();
+      alert(body.path ? `Бэкап создан: ${body.path}` : "Бэкап создан");
+    } catch {
+      alert("Не удалось создать серверный бэкап. Нужен admin token.");
+    }
+  });
+  const importBtn = document.getElementById("import");
+  if (importBtn) importBtn.addEventListener("click", () => document.getElementById("import-file").click());
+  const importFile = document.getElementById("import-file");
+  if (importFile) importFile.addEventListener("change", importData);
 
-  document.getElementById("sync-save").addEventListener("click", async () => {
+  const syncSave = document.getElementById("sync-save");
+  if (syncSave) syncSave.addEventListener("click", async () => {
     syncCfg = {
       apiUrl: document.getElementById("sync-url").value.trim(),
       token: document.getElementById("sync-token").value.trim(),
@@ -1217,7 +2109,8 @@ function wireSettings() {
     await pullOnStart();
     renderSettings();
   });
-  document.getElementById("sync-now").addEventListener("click", async () => {
+  const syncNow = document.getElementById("sync-now");
+  if (syncNow) syncNow.addEventListener("click", async () => {
     await pushNow();
     renderSettings();
   });
@@ -1235,8 +2128,11 @@ function renderEditableList(containerId, key, addBtnId) {
   document.querySelectorAll(`#${containerId} input`).forEach((inp) =>
     inp.addEventListener("change", () => {
       const st = store.get();
-      st[inp.dataset.key][+inp.dataset.i].name = inp.value;
+      const nextName = inp.dataset.key === "exercises" ? cleanExerciseName(inp.value) : inp.value.trim();
+      if (!nextName) return;
+      st[inp.dataset.key][+inp.dataset.i].name = nextName;
       saveState(st);
+      renderSettings();
     })
   );
   document.querySelectorAll(`#${containerId} [data-del]`).forEach((b) =>
@@ -1251,9 +2147,15 @@ function renderEditableList(containerId, key, addBtnId) {
     const name = prompt("Название?");
     if (!name) return;
     const st = store.get();
-    const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + st[key].length;
-    if (key === "exercises") st.exercises.push({ id, name, type: "reps", preset: false });
-    else st.habits.push({ id, name });
+    if (key === "exercises") {
+      const cleanName = cleanExerciseName(name);
+      if (st.exercises.some((item) => sameName(item.name, cleanName))) return;
+      st.exercises.push({ id: normalizeId(cleanName, st.exercises), name: cleanName, type: "reps", preset: false });
+    } else {
+      const cleanName = name.trim();
+      if (!cleanName) return;
+      st.habits.push({ id: normalizeId(cleanName, st[key]), name: cleanName });
+    }
     saveState(st);
     renderSettings();
   });
