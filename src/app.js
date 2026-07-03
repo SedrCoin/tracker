@@ -5,9 +5,26 @@ import * as Sync from "./sync.js";
 
 const store = createStore(window.localStorage);
 
-let syncCfg = Sync.loadSyncConfig(window.localStorage);
+function configuredApiUrl() {
+  const explicit =
+    (window.TRACKER_API_URL && String(window.TRACKER_API_URL).trim()) ||
+    (document.querySelector('meta[name="tracker-api-url"]')?.content || "").trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  if (window.location.protocol === "https:" && !window.location.hostname.endsWith("github.io")) {
+    return `${window.location.origin}/trackerapi`;
+  }
+  return "";
+}
+
+function withDetectedSyncConfig(cfg) {
+  if (cfg && cfg.apiUrl) return cfg;
+  const apiUrl = configuredApiUrl();
+  return apiUrl ? { ...(cfg || {}), apiUrl } : cfg;
+}
+
+let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-8";
+const APP_VERSION = "20260703-9";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -65,6 +82,21 @@ function friendlySaveError(err) {
   if (/401|unauthorized/i.test(message)) return "Сохранено на телефоне, но сервер не принял токен. Нужно заново войти или проверить ключ.";
   if (/Failed to fetch|NetworkError|offline|sync failed/i.test(message)) return "Сохранено на телефоне, но сервер сейчас недоступен.";
   return "Не удалось сохранить профиль. Попробуй ещё раз.";
+}
+
+async function syncProfileState(state, profile) {
+  if (!syncCfg.apiUrl) return "local";
+  if (syncCfg.token) {
+    await pushNow({ throwOnError: true });
+    return "synced";
+  }
+  const client = Sync.createSyncClient(syncCfg, window.fetch.bind(window));
+  const created = await client.register(profile, state);
+  syncCfg = { ...syncCfg, token: created.token };
+  Sync.saveSyncConfig(window.localStorage, syncCfg);
+  if (created.profile) state.settings.profile = created.profile;
+  store.set(state);
+  return "registered";
 }
 
 function syncStatusLabel() {
@@ -516,7 +548,7 @@ function renderOnboarding(state) {
         <div class="onboard-actions">
           <button class="btn" id="onboard-next">${step === 2 ? "Войти" : "Дальше"}</button>
         </div>
-        <div class="onboard-note" id="onboard-note">${Sync.isConfigured(syncCfg) ? "Создам аккаунт на сервере и включу синхронизацию." : "Пока сохраню профиль локально. Сервер можно подключить в настройках."}</div>
+        <div class="onboard-note" id="onboard-note">${syncCfg.apiUrl ? "Создам аккаунт на сервере и включу синхронизацию." : "Пока сохраню профиль локально. Открой приложение с домена, где доступен /trackerapi."}</div>
       </div>
     </div>`;
 
@@ -565,23 +597,17 @@ function renderOnboarding(state) {
       const list = ensureMeasurements(st);
       list.push({ date: currentDay, ...measurements });
     }
+    let localSaved = false;
     try {
-      if (Sync.isConfigured(syncCfg)) {
-        const client = Sync.createSyncClient(syncCfg, window.fetch.bind(window));
-        const created = await client.register(profile, st);
-        syncCfg = { ...syncCfg, token: created.token };
-        Sync.saveSyncConfig(window.localStorage, syncCfg);
-        st.settings.profile = created.profile || profile;
-      }
-      saveState(st);
-      await pushNow();
+      store.set(st);
+      localSaved = true;
+      await syncProfileState(st, profile);
       onboardingDraft = null;
       onboardingStep = 0;
       renderToday();
     } catch (e) {
-      st.settings.profile = profile;
-      saveState(st);
-      document.getElementById("onboard-note").textContent = "Профиль сохранён локально. Сервер не ответил, синхронизируем позже.";
+      if (!localSaved) store.set(st);
+      document.getElementById("onboard-note").textContent = friendlySaveError(e);
       setTimeout(renderToday, 700);
     }
   };
@@ -661,9 +687,11 @@ function renderProfileEditor() {
     try {
       store.set(next);
       localSaved = true;
-      if (Sync.isConfigured(syncCfg)) {
-        await pushNow({ throwOnError: true });
+      const syncResult = await syncProfileState(next, next.settings.profile);
+      if (syncResult === "synced") {
         notify("Профиль сохранён и синхронизирован", "ok");
+      } else if (syncResult === "registered") {
+        notify("Аккаунт создан, профиль сохранён на сервере", "ok");
       } else {
         notify("Профиль сохранён на устройстве", "ok");
       }
