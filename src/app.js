@@ -25,7 +25,7 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-13";
+const APP_VERSION = "20260703-15";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -136,6 +136,7 @@ async function pullOnStart() {
     }
     setSyncStatus("ok");
     show("today");
+    flushAllSharedChallenges();
   } catch {
     setSyncStatus("offline");
   }
@@ -365,6 +366,11 @@ function toggleChallengeCheck(state, challengeId, iso = todayISO()) {
   if (!challenge || !challengeCanCheck(challenge, iso)) return false;
   if (!challenge.checks || typeof challenge.checks !== "object") challenge.checks = {};
   challenge.checks[iso] = challenge.checks[iso] !== true;
+  if (challenge.shared) {
+    if (!Array.isArray(challenge.shared.pendingChecks)) challenge.shared.pendingChecks = [];
+    challenge.shared.pendingChecks = challenge.shared.pendingChecks.filter((item) => item.date !== iso);
+    challenge.shared.pendingChecks.push({ date: iso, done: challenge.checks[iso] === true });
+  }
   return true;
 }
 
@@ -411,6 +417,30 @@ function challengeCardHtml(challenge, { compact = false } = {}) {
     </div>
     ${status === "active" ? `<button class="challenge-check ${checked ? "done" : ""}" data-challenge-check="${esc(challenge.id)}" aria-label="Отметить сегодня">${ICON.check}</button>` : ""}
   </article>`;
+}
+
+function sharedParticipantsHtml(challenge) {
+  const room = challenge.shared && challenge.shared.room;
+  if (!room || !room.participants) return "";
+  const rows = Object.entries(room.participants)
+    .map(([id, p]) => {
+      const participantChallenge = { ...challenge, checks: p.checks || {}, status: p.status || "active" };
+      const done = L.challengeCompletedCount(participantChallenge);
+      const streak = L.challengeStreak(participantChallenge, todayISO());
+      const todayDone = p.checks && p.checks[todayISO()] === true;
+      return `<div class="participant-row ${id === challenge.shared.participantId ? "me" : ""}">
+        <div>
+          <span>${esc(p.name)}</span>
+          <b>${done}/${challenge.durationDays} · стрик ${streak}</b>
+        </div>
+        <em class="${todayDone ? "done" : ""}">${todayDone ? "сегодня" : "—"}</em>
+      </div>`;
+    })
+    .join("");
+  return `<section class="card participants-card">
+    <div class="section-head"><div class="title">Участники</div><div class="stat-pill blue">${esc(room.code)}</div></div>
+    ${rows}
+  </section>`;
 }
 
 function templateCardHtml(template, compact = false) {
@@ -599,6 +629,7 @@ function renderToday() {
       const st = store.get();
       if (toggleChallengeCheck(st, btn.dataset.challengeCheck, today)) {
         saveState(st);
+        flushSharedChallenge(btn.dataset.challengeCheck).then((ok) => ok && renderToday());
         renderToday();
       }
     })
@@ -946,6 +977,90 @@ function ensureNutrition(day) {
 
 function apiBase() {
   return (syncCfg.apiUrl || "").replace(/\/$/, "");
+}
+function inviteLink(code) {
+  const basePath = window.location.pathname.replace(/\/?index\.html$/, "/");
+  const api = apiBase();
+  const query = api ? `?api=${encodeURIComponent(api)}` : "";
+  if (window.location.protocol === "file:") return `challenge.html${query}#${code}`;
+  return `${window.location.origin}${basePath}challenge.html${query}#${code}`;
+}
+function sharedApiBase(shared) {
+  return ((shared && shared.api) || apiBase()).replace(/\/$/, "");
+}
+async function createRoomForChallenge(challenge) {
+  if (!syncCfg.apiUrl) throw new Error("api required");
+  if (!syncCfg.token) await syncProfileState(store.get(), (store.get().settings || {}).profile || { name: "Профиль" });
+  const state = store.get();
+  const profile = (state.settings && state.settings.profile) || {};
+  const res = await window.fetch(`${apiBase()}/rooms`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${syncCfg.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: challenge.name,
+      durationDays: challenge.durationDays,
+      startDate: challenge.startDate,
+      strict: !!challenge.strict,
+      rules: challenge.rules || [],
+      checks: challenge.checks || {},
+      participantName: profile.name || "Участник",
+    }),
+  });
+  if (!res.ok) throw new Error("room create failed: " + res.status);
+  return res.json();
+}
+async function fetchRoom(shared) {
+  const res = await window.fetch(`${sharedApiBase(shared)}/rooms/${encodeURIComponent(shared.code)}`);
+  if (!res.ok) throw new Error("room fetch failed: " + res.status);
+  return (await res.json()).room;
+}
+async function joinRoomByCode(code, name) {
+  const cleanCode = String(code || "").trim().toUpperCase();
+  const res = await window.fetch(`${apiBase()}/rooms/${encodeURIComponent(cleanCode)}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("room join failed: " + res.status);
+  return res.json();
+}
+async function postRoomCheck(shared, check) {
+  const res = await window.fetch(`${sharedApiBase(shared)}/rooms/${encodeURIComponent(shared.code)}/checkin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      participantId: shared.participantId,
+      secret: shared.secret,
+      date: check.date,
+      done: !!check.done,
+    }),
+  });
+  if (!res.ok) throw new Error("room checkin failed: " + res.status);
+  return (await res.json()).room;
+}
+async function flushSharedChallenge(challengeId) {
+  const st = store.get();
+  const challenge = ensureChallenges(st).find((ch) => ch.id === challengeId);
+  if (!challenge || !challenge.shared) return false;
+  const pending = [...(challenge.shared.pendingChecks || [])];
+  let room = null;
+  try {
+    for (const check of pending) room = await postRoomCheck(challenge.shared, check);
+    if (!room) room = await fetchRoom(challenge.shared);
+    challenge.shared.room = room;
+    challenge.shared.pendingChecks = [];
+    store.set(st);
+    schedulePush();
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function flushAllSharedChallenges() {
+  const ids = ensureChallenges(store.get())
+    .filter((ch) => ch.shared && Array.isArray(ch.shared.pendingChecks) && ch.shared.pendingChecks.length)
+    .map((ch) => ch.id);
+  for (const id of ids) await flushSharedChallenge(id);
 }
 async function foodSearch(q) {
   const r = await window.fetch(`${apiBase()}/foods/search?q=${encodeURIComponent(q)}`, {
@@ -1918,6 +2033,13 @@ function renderChallenges() {
       <div class="section-head"><div class="title">Активные</div></div>
       ${active.length ? `<div class="challenge-stack">${active.map((ch) => challengeCardHtml(ch)).join("")}</div>` : `<div class="card empty-challenge">Нет активных челленджей</div>`}
     </section>
+    <section class="card join-room-card">
+      <div class="section-head"><div class="title">Код друга</div></div>
+      <div class="join-room-row">
+        <input id="join-room-code" placeholder="WNTR7F3K" autocomplete="off">
+        <button class="btn blue" id="join-room-btn">Войти</button>
+      </div>
+    </section>
     ${archived.length ? `<section class="challenge-section">
       <div class="section-head"><div class="title">История</div></div>
       <div class="challenge-stack">${archived.map((ch) => challengeCardHtml(ch, { compact: true })).join("")}</div>
@@ -1949,6 +2071,7 @@ function wireChallengeList() {
       const st = store.get();
       if (toggleChallengeCheck(st, btn.dataset.challengeCheck, todayISO())) {
         saveState(st);
+        flushSharedChallenge(btn.dataset.challengeCheck).then((ok) => ok && renderChallenges());
         renderChallenges();
       }
     })
@@ -1960,6 +2083,52 @@ function wireChallengeList() {
       renderChallenges();
     })
   );
+  const joinBtn = screens.challenges.querySelector("#join-room-btn");
+  if (joinBtn) joinBtn.addEventListener("click", async () => {
+    const code = screens.challenges.querySelector("#join-room-code").value.trim().toUpperCase();
+    if (!code) return;
+    if (!syncCfg.apiUrl) {
+      notify("Открой приложение с домена, где доступен /trackerapi", "error");
+      return;
+    }
+    joinBtn.disabled = true;
+    joinBtn.textContent = "Вхожу...";
+    try {
+      const st = store.get();
+      const profile = (st.settings && st.settings.profile) || {};
+      const joined = await joinRoomByCode(code, profile.name || "Участник");
+      const room = joined.room;
+      const challenge = {
+        id: randomId("c"),
+        templateId: null,
+        name: room.name,
+        durationDays: room.durationDays,
+        startDate: room.startDate,
+        strict: !!room.strict,
+        status: "active",
+        checks: { ...((room.participants[joined.participantId] || {}).checks || {}) },
+        rules: room.rules || [],
+        accent: "focus",
+        shared: {
+          api: apiBase(),
+          code: room.code,
+          participantId: joined.participantId,
+          secret: joined.secret,
+          pendingChecks: [],
+          room,
+        },
+      };
+      ensureChallenges(st).push(challenge);
+      saveState(st);
+      challengeDetailId = challenge.id;
+      renderChallenges();
+      notify("Челлендж добавлен", "ok");
+    } catch (e) {
+      notify(/409/.test(String(e.message)) ? "Такое имя уже есть в комнате" : "Не удалось войти по коду", "error");
+      joinBtn.disabled = false;
+      joinBtn.textContent = "Войти";
+    }
+  });
 }
 
 function startTemplate() {
@@ -2014,6 +2183,51 @@ function renderChallengeStart() {
   });
 }
 
+async function shareChallengeRoom(id) {
+  let st = store.get();
+  let challenge = ensureChallenges(st).find((ch) => ch.id === id);
+  if (!challenge) return;
+  const btn = document.getElementById("challenge-share");
+  const oldText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = challenge.shared ? "Готовлю ссылку..." : "Создаю комнату...";
+  }
+  try {
+    if (!challenge.shared) {
+      const created = await createRoomForChallenge(challenge);
+      st = store.get();
+      challenge = ensureChallenges(st).find((ch) => ch.id === id);
+      challenge.shared = {
+        api: apiBase(),
+        code: created.code,
+        participantId: created.participantId,
+        secret: created.secret,
+        pendingChecks: [],
+        room: created.room,
+      };
+      saveState(st);
+    }
+    const url = inviteLink(challenge.shared.code);
+    const text = `${challenge.name}: код ${challenge.shared.code}`;
+    if (navigator.share) {
+      await navigator.share({ title: challenge.name, text, url });
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(url);
+      notify("Ссылка скопирована", "ok");
+    } else {
+      notify(`Код: ${challenge.shared.code}`, "ok");
+    }
+    renderChallengeDetail(id);
+  } catch (e) {
+    notify(/api required/i.test(String(e.message)) ? "Сначала открой приложение с домена API" : "Не удалось создать комнату", "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  }
+}
+
 function renderChallengeDetail(id) {
   const s = store.get();
   const challenge = ensureChallenges(s).find((ch) => ch.id === id);
@@ -2065,8 +2279,14 @@ function renderChallengeDetail(id) {
       <div class="section-head"><div class="title">Правила</div></div>
       ${(challenge.rules || []).length ? `<ul>${challenge.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>` : `<div class="empty-hint">Правила не заданы</div>`}
     </section>
+    ${challenge.shared ? `<section class="card invite-card">
+      <div class="section-head"><div class="title">Код комнаты</div></div>
+      <div class="invite-code">${esc(challenge.shared.code)}</div>
+      <div class="invite-link">${esc(inviteLink(challenge.shared.code))}</div>
+    </section>` : ""}
+    ${sharedParticipantsHtml(challenge)}
     <div class="challenge-actions">
-      <button class="btn ghost" id="challenge-share">Бросить вызов другу</button>
+      <button class="btn ghost" id="challenge-share">${challenge.shared ? "Поделиться ссылкой" : "Бросить вызов другу"}</button>
       ${status === "failed" ? `<button class="btn blue" id="challenge-restart">Начать заново</button>` : ""}
       ${status === "active" ? `<button class="btn danger" id="challenge-stop">Остановить</button>` : ""}
     </div>
@@ -2075,10 +2295,11 @@ function renderChallengeDetail(id) {
     const st = store.get();
     if (toggleChallengeCheck(st, id, today)) {
       saveState(st);
+      flushSharedChallenge(id).then((ok) => ok && renderChallengeDetail(id));
       renderChallengeDetail(id);
     }
   });
-  document.getElementById("challenge-share").addEventListener("click", () => notify("Комнаты и ссылки добавлю следующим этапом", "warn"));
+  document.getElementById("challenge-share").addEventListener("click", () => shareChallengeRoom(id));
   const restart = document.getElementById("challenge-restart");
   if (restart) restart.addEventListener("click", () => {
     const st = store.get();
@@ -2516,7 +2737,7 @@ function wireSettings() {
       return;
     }
     try {
-      const res = await fetch(syncApiBase() + "/backup", {
+      const res = await fetch(apiBase() + "/backup", {
         method: "POST",
         headers: { Authorization: `Bearer ${syncCfg.token}` },
       });
@@ -2659,6 +2880,7 @@ function importData(e) {
 // ---------- Старт ----------
 let renderedChallengePhoto = challengePhotoIndex();
 show("today");
+flushAllSharedChallenges();
 pullOnStart();
 
 setInterval(() => {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -24,12 +24,49 @@ export function openDb(path) {
   }
 
   function normalize(row) {
-    if (!row) return { state: null, updatedAt: 0, users: {}, userStates: {} };
+    if (!row) return { state: null, updatedAt: 0, users: {}, userStates: {}, rooms: {} };
     if (!row.users) row.users = {};
     if (!row.userStates) row.userStates = {};
+    if (!row.rooms) row.rooms = {};
     if (!("state" in row)) row.state = null;
     if (!("updatedAt" in row)) row.updatedAt = 0;
     return row;
+  }
+
+  function isoToTime(iso) {
+    const [y, m, d] = String(iso || "").split("-").map(Number);
+    if (!y || !m || !d) return NaN;
+    return new Date(y, m - 1, d).getTime();
+  }
+
+  function cleanupRooms(row, now = Date.now()) {
+    for (const [code, room] of Object.entries(row.rooms || {})) {
+      const start = isoToTime(room.startDate);
+      const ttl = ((Number(room.durationDays) || 1) + 60) * 86400000;
+      if (Number.isFinite(start) && now - start > ttl) delete row.rooms[code];
+    }
+  }
+
+  function roomCode(existing) {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let tries = 0; tries < 100; tries++) {
+      const bytes = randomBytes(8);
+      const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
+      if (!existing[code]) return code;
+    }
+    throw new Error("cannot allocate room code");
+  }
+
+  function participantId(existing) {
+    let id;
+    do {
+      id = "p_" + randomBytes(3).toString("hex");
+    } while (existing[id]);
+    return id;
+  }
+
+  function participantSecret() {
+    return randomBytes(32).toString("hex");
   }
 
   function read() {
@@ -90,6 +127,79 @@ export function openDb(path) {
       backup();
       write(row);
       return updatedAt;
+    },
+    createRoom(roomInput, creatorName, now = Date.now()) {
+      const row = normalize(read());
+      cleanupRooms(row, now);
+      if (Object.keys(row.rooms).length >= 20) {
+        const err = new Error("room limit");
+        err.code = "ROOM_LIMIT";
+        throw err;
+      }
+      const code = roomCode(row.rooms);
+      const pId = participantId({});
+      const secret = participantSecret();
+      const cleanName = String(creatorName || "Участник").trim().slice(0, 30) || "Участник";
+      row.rooms[code] = {
+        code,
+        name: roomInput.name,
+        durationDays: roomInput.durationDays,
+        startDate: roomInput.startDate,
+        strict: !!roomInput.strict,
+        rules: Array.isArray(roomInput.rules) ? roomInput.rules : [],
+        createdAt: now,
+        participants: {
+          [pId]: { name: cleanName, secret, checks: roomInput.checks || {}, status: "active", joinedAt: now },
+        },
+      };
+      backup();
+      write(row);
+      return { code, participantId: pId, secret, room: row.rooms[code] };
+    },
+    getRoom(code) {
+      const row = normalize(read());
+      cleanupRooms(row);
+      return row.rooms[String(code || "").toUpperCase()] || null;
+    },
+    joinRoom(code, name, now = Date.now()) {
+      const row = normalize(read());
+      cleanupRooms(row, now);
+      const room = row.rooms[String(code || "").toUpperCase()];
+      if (!room) return null;
+      const cleanName = String(name || "").trim().slice(0, 30);
+      if (!cleanName) {
+        const err = new Error("bad name");
+        err.code = "BAD_NAME";
+        throw err;
+      }
+      const participants = room.participants || (room.participants = {});
+      if (Object.keys(participants).length >= 10) {
+        const err = new Error("room full");
+        err.code = "ROOM_FULL";
+        throw err;
+      }
+      if (Object.values(participants).some((p) => p.name.toLowerCase() === cleanName.toLowerCase() && p.status !== "stopped")) {
+        const err = new Error("duplicate name");
+        err.code = "DUPLICATE_NAME";
+        throw err;
+      }
+      const pId = participantId(participants);
+      const secret = participantSecret();
+      participants[pId] = { name: cleanName, secret, checks: {}, status: "active", joinedAt: now };
+      backup();
+      write(row);
+      return { participantId: pId, secret, room };
+    },
+    updateRoomParticipant(code, participantId, update, now = Date.now()) {
+      const row = normalize(read());
+      cleanupRooms(row, now);
+      const room = row.rooms[String(code || "").toUpperCase()];
+      if (!room || !room.participants || !room.participants[participantId]) return null;
+      const participant = room.participants[participantId];
+      update(participant, room);
+      backup();
+      write(row);
+      return room;
     },
     backup,
     close() {},

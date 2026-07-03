@@ -38,6 +38,7 @@ html, body {
 }
 
 body { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
+body.lite-page { padding-bottom: env(safe-area-inset-bottom); }
 
 .screen {
   padding: calc(env(safe-area-inset-top) + 18px) 16px 28px;
@@ -758,6 +759,26 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
   font-weight: 850;
   text-align: center;
 }
+.join-room-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 8px;
+}
+.join-room-row input {
+  min-width: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 12px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.join-room-row .btn {
+  margin: 0;
+  padding: 0 12px;
+}
 .challenge-custom { width: 100%; }
 .detail-accent.challenge { background: linear-gradient(90deg, #ff4b4b, #ff9a00, #1cb0f6); }
 .challenge-detail-hero {
@@ -811,6 +832,56 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
   font-weight: 750;
   line-height: 1.45;
 }
+.invite-code {
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+.invite-link {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+.participant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--hairline);
+}
+.participant-row:first-of-type { border-top: none; }
+.participant-row span {
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+}
+.participant-row b {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.participant-row em {
+  flex: none;
+  min-width: 66px;
+  text-align: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #eef1f5;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 900;
+}
+.participant-row em.done {
+  color: #fff;
+  background: var(--green);
+}
 .challenge-actions {
   display: flex;
   flex-direction: column;
@@ -827,6 +898,14 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 4px 0 1
   font: inherit;
   color: var(--text);
   background: var(--surface);
+}
+.lite-shell { padding-bottom: 22px; }
+.lite-install {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+  padding: 4px 18px 18px;
 }
 
 /* ---------- Weigh-in ---------- */

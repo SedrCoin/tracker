@@ -70,6 +70,11 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
       return;
     }
 
+    if (path === "/rooms" || path.startsWith("/rooms/")) {
+      await handleRooms(req, res, { db, token, maxBody, cors, allow, path });
+      return;
+    }
+
     if (path === "/foods/search" || path === "/foods/get") {
       await handleFoods(req, res, { db, token, fatsecret, cors, allow, path, url });
       return;
@@ -77,6 +82,197 @@ export function createApp({ db, token, allowOrigin, maxBody, allow = () => true,
 
     sendJson(res, 404, { error: "not found" }, cors);
   };
+}
+
+async function readJson(req, maxBody) {
+  const raw = await readBody(req, maxBody);
+  if (!raw) return {};
+  return JSON.parse(raw);
+}
+
+function todayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDays(iso, n) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function validISO(iso) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(iso || ""));
+}
+
+function cleanRules(rules) {
+  if (!Array.isArray(rules)) return [];
+  return rules.map((r) => String(r || "").trim().slice(0, 120)).filter(Boolean).slice(0, 12);
+}
+
+function publicRoom(room) {
+  const participants = {};
+  for (const [id, p] of Object.entries((room && room.participants) || {})) {
+    participants[id] = {
+      name: p.name,
+      checks: p.checks || {},
+      status: p.status || "active",
+      joinedAt: p.joinedAt,
+    };
+  }
+  return {
+    code: room.code,
+    name: room.name,
+    durationDays: room.durationDays,
+    startDate: room.startDate,
+    strict: !!room.strict,
+    rules: room.rules || [],
+    createdAt: room.createdAt,
+    participants,
+  };
+}
+
+function authenticatedUser(db, token, req) {
+  const provided = extractBearer(req.headers["authorization"]);
+  if (tokenMatches(token, provided)) return { legacy: true, profile: { name: "Артём" } };
+  const user = db.getUserByToken(provided);
+  return user ? { legacy: false, profile: user.profile || {} } : null;
+}
+
+async function handleRooms(req, res, { db, token, maxBody, cors, allow, path }) {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!allow(ip)) {
+    sendJson(res, 429, { error: "rate limited" }, cors);
+    return;
+  }
+
+  if (path === "/rooms") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "method not allowed" }, cors);
+      return;
+    }
+    const user = authenticatedUser(db, token, req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" }, cors);
+      return;
+    }
+    let body;
+    try {
+      body = await readJson(req, maxBody);
+    } catch (e) {
+      sendJson(res, e.code === "TOO_LARGE" ? 413 : 400, { error: e.code === "TOO_LARGE" ? "too large" : "bad json" }, cors);
+      return;
+    }
+    const durationDays = Math.max(1, Math.min(365, parseInt(body.durationDays, 10) || 0));
+    const name = String(body.name || "").trim().slice(0, 80);
+    const startDate = String(body.startDate || "").trim();
+    if (!name || !durationDays || !validISO(startDate)) {
+      sendJson(res, 400, { error: "bad room" }, cors);
+      return;
+    }
+    try {
+      const created = db.createRoom(
+        {
+          name,
+          durationDays,
+          startDate,
+          strict: !!body.strict,
+          rules: cleanRules(body.rules),
+          checks: body.checks && typeof body.checks === "object" ? body.checks : {},
+        },
+        body.participantName || user.profile.name || "Участник"
+      );
+      sendJson(res, 200, { code: created.code, participantId: created.participantId, secret: created.secret, room: publicRoom(created.room) }, cors);
+    } catch (e) {
+      sendJson(res, e.code === "ROOM_LIMIT" ? 409 : 500, { error: e.code === "ROOM_LIMIT" ? "room limit" : "room create failed" }, cors);
+    }
+    return;
+  }
+
+  const match = /^\/rooms\/([A-Z0-9]{3,12})(?:\/(join|checkin|leave))?$/.exec(path);
+  if (!match) {
+    sendJson(res, 404, { error: "not found" }, cors);
+    return;
+  }
+  const code = match[1].toUpperCase();
+  const action = match[2] || "";
+
+  if (!action && req.method === "GET") {
+    const room = db.getRoom(code);
+    if (!room) {
+      sendJson(res, 404, { error: "room not found" }, cors);
+      return;
+    }
+    sendJson(res, 200, { room: publicRoom(room) }, cors);
+    return;
+  }
+
+  if (action === "join" && req.method === "POST") {
+    let body;
+    try {
+      body = await readJson(req, maxBody);
+    } catch {
+      sendJson(res, 400, { error: "bad json" }, cors);
+      return;
+    }
+    try {
+      const joined = db.joinRoom(code, body.name);
+      if (!joined) {
+        sendJson(res, 404, { error: "room not found" }, cors);
+        return;
+      }
+      sendJson(res, 200, { participantId: joined.participantId, secret: joined.secret, room: publicRoom(joined.room) }, cors);
+    } catch (e) {
+      const status = e.code === "BAD_NAME" ? 400 : 409;
+      sendJson(res, status, { error: e.code === "ROOM_FULL" ? "room full" : e.code === "DUPLICATE_NAME" ? "duplicate name" : "bad name" }, cors);
+    }
+    return;
+  }
+
+  if ((action === "checkin" || action === "leave") && req.method === "POST") {
+    let body;
+    try {
+      body = await readJson(req, maxBody);
+    } catch {
+      sendJson(res, 400, { error: "bad json" }, cors);
+      return;
+    }
+    const room = db.getRoom(code);
+    const participant = room && room.participants && room.participants[body.participantId];
+    if (!room) {
+      sendJson(res, 404, { error: "room not found" }, cors);
+      return;
+    }
+    if (!participant || !tokenMatches(participant.secret, body.secret)) {
+      sendJson(res, 401, { error: "unauthorized" }, cors);
+      return;
+    }
+    if (action === "checkin") {
+      const date = String(body.date || "");
+      const endDate = addDays(room.startDate, (Number(room.durationDays) || 1) - 1);
+      if (!validISO(date) || date < room.startDate || date > endDate || date > todayISO()) {
+        sendJson(res, 400, { error: "bad date" }, cors);
+        return;
+      }
+      const updated = db.updateRoomParticipant(code, body.participantId, (p) => {
+        if (!p.checks || typeof p.checks !== "object") p.checks = {};
+        p.checks[date] = !!body.done;
+      });
+      sendJson(res, 200, { room: publicRoom(updated) }, cors);
+      return;
+    }
+    const updated = db.updateRoomParticipant(code, body.participantId, (p) => {
+      p.status = "stopped";
+    });
+    sendJson(res, 200, { room: publicRoom(updated) }, cors);
+    return;
+  }
+
+  sendJson(res, 405, { error: "method not allowed" }, cors);
 }
 
 async function handleBackup(req, res, { db, token, cors, allow }) {
