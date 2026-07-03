@@ -24,7 +24,7 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-10";
+const APP_VERSION = "20260703-11";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -126,7 +126,8 @@ async function pullOnStart() {
     const remote = await client.pull();
     const localUpdatedAt = store.getMeta().updatedAt;
     if (remote.state && Sync.chooseNewer(localUpdatedAt, remote.updatedAt) === "remote") {
-      store.applyRemote(remote.state, remote.updatedAt);
+      const migrated = store.applyRemote(remote.state, remote.updatedAt);
+      if (migrated) await pushNow();
     } else {
       await pushNow(); // на сервере пусто/старее — заливаем локальное
     }

@@ -264,9 +264,10 @@ export function createStore(ls) {
     setMeta({ updatedAt: Date.now() });
   }
   function applyRemote(state, updatedAt) {
-    migrateState(state);
+    const changed = migrateState(state);
     ls.setItem(KEY, JSON.stringify(state));
     setMeta({ updatedAt });
+    return changed;
   }
   function exportJSON() {
     return JSON.stringify(get(), null, 2);
