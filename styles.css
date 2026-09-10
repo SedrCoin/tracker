@@ -1580,6 +1580,47 @@ textarea:focus { outline: none; border-color: var(--green); }
   font-size: 9px;
   font-weight: 700;
 }
+.stats-section-title { margin: 0; font-size: 22px; font-weight: 850; }
+.progress-map { padding: 20px; margin: 0 0 26px; box-shadow: none; }
+.progress-map-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 18px; }
+.progress-map-heading .eyebrow { margin-bottom: 5px; color: var(--green-700); }
+.progress-map-heading h2 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 850; letter-spacing: -.03em; }
+.map-all-time { flex: none; padding: 6px 9px; background: var(--surface-2); border-radius: 9px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.map-source-label { display: block; margin-bottom: 7px; font-size: 14px; font-weight: 700; color: var(--muted); }
+.map-source { display: block; width: 100%; min-width: 0; min-height: 48px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); color: var(--text); padding: 11px 10px; font: inherit; font-size: 16px; font-weight: 700; text-overflow: ellipsis; }
+.map-total-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 14px; flex-wrap: wrap; margin: 16px 0; font-variant-numeric: tabular-nums; }
+.map-total-row strong { font-size: 24px; line-height: 1.2; font-weight: 850; overflow-wrap: anywhere; }
+.map-total-row > span { color: var(--muted); font-size: 13px; }
+.map-art-switch { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #f0f3f6; margin-bottom: 16px; }
+.map-art-switch button { flex: 1; min-width: 0; min-height: 42px; padding: 10px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 750; cursor: pointer; }
+.map-art-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px #10202012; }
+.map-mosaic-frame { padding: 12px; background: #f0f3f6; border-radius: 16px; }
+.map-mosaic { width: 100%; aspect-ratio: 1; }
+.map-pixels { width: 100%; height: 100%; display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); grid-template-rows: repeat(20, minmax(0, 1fr)); gap: 2px; }
+.map-pixel { display: block; min-width: 0; min-height: 0; background: #dce3e8; border-radius: 1px; }
+.map-pixel.revealed { background: var(--pixel-color); }
+.map-pixel.fresh { animation: mapInk .3s ease-out both; animation-delay: var(--pixel-delay); }
+@keyframes mapInk { from { background: #dce3e8; opacity: .55; transform: scale(.7); } to { background: var(--pixel-color); opacity: 1; transform: scale(1); } }
+.map-progress-row { display: flex; justify-content: space-between; gap: 12px; margin: 13px 0 5px; font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.map-progress-row strong { color: var(--green-700); }
+.map-unit { color: var(--muted); font-size: 13px; }
+.map-chapter-nav { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 12px; margin-top: 16px; }
+.map-chapter-nav span { text-align: center; color: var(--text); font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.map-chapter-nav button { width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 12px; font: inherit; font-size: 22px; background: var(--surface); color: var(--text); cursor: pointer; }
+.map-chapter-nav button:disabled { opacity: .3; cursor: default; }
+.map-discovery { margin-top: 14px; font-size: 15px; font-weight: 750; line-height: 1.4; color: var(--text); text-align: center; }
+.map-discovery.complete { color: #388300; }
+.map-help { margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+.progress-map button:focus-visible, .progress-map select:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+@media (max-width: 380px) {
+  .progress-map { padding: 15px; }
+  .progress-map-heading { flex-wrap: wrap; }
+  .progress-map-heading h2 { font-size: 21px; }
+  .map-mosaic-frame { padding: 9px; }
+  .map-pixels { gap: 1.5px; }
+  .stats-top { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { .map-pixel.fresh { animation: none !important; } }
 .stats-top {
   display: flex;
   align-items: center;

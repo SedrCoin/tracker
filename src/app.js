@@ -3,8 +3,10 @@ import * as L from "./logic.js";
 import * as Charts from "./charts.js";
 import * as Sync from "./sync.js";
 import { CHALLENGE_TEMPLATES, challengeTemplateById } from "./challenge-catalog.js";
+import { createProgressMap } from "./progress-map.js";
 
 const store = createStore(window.localStorage);
+const progressMap = createProgressMap(window.localStorage);
 
 function configuredApiUrl() {
   const explicit =
@@ -25,7 +27,7 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260703-15";
+const APP_VERSION = "20260910-01";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsRange = "week"; // week | month
 let statsEndDay = null;
@@ -2557,8 +2559,10 @@ function renderStats() {
   const minWeight = weightSeries.reduce((acc, p) => (Number(p.value) < Number(acc.value) ? p : acc), weightSeries[0] || { value: 0, label: "—" });
 
   screens.stats.innerHTML = `
+    <h1>Прогресс</h1>
+    <div id="progress-map"></div>
     <div class="stats-top">
-      <h1>Прогресс</h1>
+      <h2 class="stats-section-title">Статистика</h2>
       <div class="segmented">
         <button class="${statsRange === "week" ? "active" : ""}" data-stats-range="week">Неделя</button>
         <button class="${statsRange === "month" ? "active" : ""}" data-stats-range="month">Месяц</button>
@@ -2597,6 +2601,7 @@ function renderStats() {
     </section>
     ${measurementBlocks}
   `;
+  progressMap.render(document.getElementById("progress-map"), s, todayISO());
   document.querySelectorAll("[data-stats-range]").forEach((btn) =>
     btn.addEventListener("click", () => {
       statsRange = btn.dataset.statsRange;

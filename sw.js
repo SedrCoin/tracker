@@ -1,15 +1,17 @@
-const CACHE = "tracker-v26";
+const CACHE = "tracker-v27";
 const ASSETS = [
   ".",
   "index.html",
-  "challenge.html?v=20260703-15",
-  "styles.css?v=20260703-15",
-  "src/app.js?v=20260703-15",
-  "src/challenge-lite.js?v=20260703-15",
+  "challenge.html?v=20260910-01",
+  "styles.css?v=20260910-01",
+  "src/app.js?v=20260910-01",
+  "src/challenge-lite.js?v=20260910-01",
   "src/challenge-catalog.js",
   "src/logic.js",
   "src/storage.js",
   "src/charts.js",
+  "src/progress-map.js",
+  "src/progress-art.js",
   "src/sync.js",
   "manifest.json",
   "icons/icon-192.png",
