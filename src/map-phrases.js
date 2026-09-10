@@ -1,4 +1,5 @@
 export const MAX_PHRASE_LENGTH = 30;
+export const PHRASE_BACKGROUND = "#96c46e";
 export const DEFAULT_PHRASES = ["Ты смог", "Твоя сила", "День за днём"];
 
 export function validateMapPhrase(value) {
@@ -48,6 +49,6 @@ export function layoutMapPhrase(value) {
 export function phraseArtwork(value) {
   const layout = layoutMapPhrase(value);
   const lines = layout.lines.map((line, index) => `<text x="400" y="${layout.firstBaseline + index * layout.lineHeight}">${escapeXml(line)}</text>`).join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800"><rect width="800" height="800" fill="#f3f7f1"/><g fill="#244638" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${layout.fontSize}" text-anchor="middle">${lines}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800"><rect width="800" height="800" fill="${PHRASE_BACKGROUND}"/><g fill="#244638" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="${layout.fontSize}" text-anchor="middle">${lines}</g></svg>`;
   return { name: layout.text, image: `data:image/svg+xml,${encodeURIComponent(svg).replace(/'/g, "%27")}` };
 }

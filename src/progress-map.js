@@ -1,6 +1,6 @@
 import { addDays } from "./logic.js";
 import { SUMMIT_COLORS } from "./progress-art.js";
-import { MAX_PHRASE_LENGTH, DEFAULT_PHRASES, validateMapPhrase, phraseArtwork } from "./map-phrases.js?v=20260910-03";
+import { MAX_PHRASE_LENGTH, PHRASE_BACKGROUND, DEFAULT_PHRASES, validateMapPhrase, phraseArtwork } from "./map-phrases.js?v=20260910-04";
 
 export const MAP_SIZE = 20;
 export const MAP_CELLS = MAP_SIZE * MAP_SIZE;
@@ -125,7 +125,7 @@ export function mapArtwork(mode, page = 0, customPhrase = "", gridSize = MAP_SIZ
   if (mode === "text") {
     const custom = validateMapPhrase(customPhrase);
     const phrase = custom.valid ? custom.text : DEFAULT_PHRASES[positiveInteger(page) % DEFAULT_PHRASES.length];
-    return { ...phraseArtwork(phrase), colors: new Array(size * size).fill("#f3f7f1") };
+    return { ...phraseArtwork(phrase), colors: new Array(size * size).fill(PHRASE_BACKGROUND) };
   }
   const colors = Array.from({ length: size * size }, (_, index) => {
     const x = Math.min(MAP_SIZE - 1, Math.floor(((index % size) + .5) * MAP_SIZE / size));
