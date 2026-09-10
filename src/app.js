@@ -3,7 +3,7 @@ import * as L from "./logic.js";
 import * as Charts from "./charts.js";
 import * as Sync from "./sync.js";
 import { CHALLENGE_TEMPLATES, challengeTemplateById } from "./challenge-catalog.js";
-import { createProgressMap } from "./progress-map.js";
+import { createProgressMap } from "./progress-map.js?v=20260910-02";
 
 const store = createStore(window.localStorage);
 const progressMap = createProgressMap(window.localStorage);
@@ -27,8 +27,12 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260910-01";
+const APP_VERSION = "20260910-02";
 let todayRoute = "main"; // main | workouts | nutrition
+let statsView = "stats"; // stats | map
+try {
+  if (window.localStorage.getItem("tracker.progress.view") === "map") statsView = "map";
+} catch { /* The selected tab can also live in memory. */ }
 let statsRange = "week"; // week | month
 let statsEndDay = null;
 let challengeDetailId = null;
@@ -2479,8 +2483,43 @@ function challengeStatsHtml(state) {
   </section>`;
 }
 
+function wireProgressTabs() {
+  const buttons = [...screens.stats.querySelectorAll("[data-progress-view]")];
+  const select = (view) => {
+    statsView = view;
+    try { window.localStorage.setItem("tracker.progress.view", view); } catch { /* Optional preference. */ }
+    renderStats();
+    screens.stats.querySelector(`[data-progress-view="${view}"]`)?.focus({ preventScroll: true });
+  };
+  buttons.forEach((button, index) => {
+    button.addEventListener("click", () => select(button.dataset.progressView));
+    button.addEventListener("keydown", (event) => {
+      let next;
+      if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+      if (event.key === "ArrowLeft") next = (index + buttons.length - 1) % buttons.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = buttons.length - 1;
+      if (next == null) return;
+      event.preventDefault();
+      select(buttons[next].dataset.progressView);
+    });
+  });
+}
+
 function renderStats() {
   const s = store.get();
+  const navigation = `<h1>Прогресс</h1>
+    <div class="progress-tabs" role="tablist" aria-label="Раздел прогресса">
+      <button type="button" id="progress-tab-stats" role="tab" data-progress-view="stats" aria-selected="${statsView === "stats"}" aria-controls="progress-stats-panel" tabindex="${statsView === "stats" ? 0 : -1}">Статистика</button>
+      <button type="button" id="progress-tab-map" role="tab" data-progress-view="map" aria-selected="${statsView === "map"}" aria-controls="progress-map" tabindex="${statsView === "map" ? 0 : -1}">Карта</button>
+    </div>`;
+  screens.stats.classList.toggle("stats-map-view", statsView === "map");
+  if (statsView === "map") {
+    screens.stats.innerHTML = `${navigation}<div id="progress-stats-panel" role="tabpanel" aria-labelledby="progress-tab-stats" hidden></div><div id="progress-map" role="tabpanel" aria-labelledby="progress-tab-map"></div>`;
+    progressMap.render(document.getElementById("progress-map"), s, todayISO());
+    wireProgressTabs();
+    return;
+  }
   const count = statsWindowSize();
   const endDay = statsEndISO();
   const dates = rangeDays(endDay, count);
@@ -2559,8 +2598,9 @@ function renderStats() {
   const minWeight = weightSeries.reduce((acc, p) => (Number(p.value) < Number(acc.value) ? p : acc), weightSeries[0] || { value: 0, label: "—" });
 
   screens.stats.innerHTML = `
-    <h1>Прогресс</h1>
-    <div id="progress-map"></div>
+    ${navigation}
+    <div id="progress-map" role="tabpanel" aria-labelledby="progress-tab-map" hidden></div>
+    <div id="progress-stats-panel" role="tabpanel" aria-labelledby="progress-tab-stats">
     <div class="stats-top">
       <h2 class="stats-section-title">Статистика</h2>
       <div class="segmented">
@@ -2600,8 +2640,9 @@ function renderStats() {
       </div>
     </section>
     ${measurementBlocks}
+    </div>
   `;
-  progressMap.render(document.getElementById("progress-map"), s, todayISO());
+  wireProgressTabs();
   document.querySelectorAll("[data-stats-range]").forEach((btn) =>
     btn.addEventListener("click", () => {
       statsRange = btn.dataset.statsRange;

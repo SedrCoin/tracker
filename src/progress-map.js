@@ -194,16 +194,20 @@ export function createProgressMap(storage) {
       const order = mapRevealOrder(`${source.id}:${progress.page}`);
       const ranks = new Array(MAP_CELLS);
       order.forEach((position, rank) => { ranks[position] = rank; });
-      const priorFilled = previousCount == null
-        ? Math.max(0, progress.filled - 40)
-        : Math.max(0, Math.min(MAP_CELLS, previousCount * source.cellsPerUnit - progress.page * MAP_CELLS));
+      const hasNewProgress = previousCount != null && source.total > previousCount;
+      const priorFilled = hasNewProgress
+        ? Math.max(0, Math.min(MAP_CELLS, previousCount * source.cellsPerUnit - progress.page * MAP_CELLS))
+        : progress.filled;
       const animationStart = Math.max(priorFilled, progress.filled - 80);
       const cells = artwork.colors.map((color, position) => {
         const rank = ranks[position];
         const revealed = rank < progress.filled;
-        const fresh = revealed && rank >= animationStart;
-        // Concealed cells never receive the hidden picture's color in the DOM.
-        return `<span class="map-pixel${revealed ? " revealed" : ""}${fresh ? " fresh" : ""}"${revealed ? ` style="--pixel-color:${color};--pixel-delay:${Math.round((rank - animationStart) * 9)}ms"` : ""}></span>`;
+        const fresh = hasNewProgress && revealed && rank >= animationStart;
+        const x = (position % MAP_SIZE) / (MAP_SIZE - 1) * 100;
+        const y = Math.floor(position / MAP_SIZE) / (MAP_SIZE - 1) * 100;
+        // Each earned tile shows its exact patch of the original artwork. The
+        // sampled palette remains an offline fallback and the phrase renderer.
+        return `<span class="map-pixel${revealed ? " revealed" : ""}${fresh ? " fresh" : ""}"${revealed ? ` style="--pixel-color:${color};--tile-x:${x}%;--tile-y:${y}%;--pixel-delay:${Math.max(0, rank - animationStart) * 2}ms"` : ""}></span>`;
       }).join("");
       const groups = [...new Set(sources.map((item) => item.group))];
       const options = groups.map((group) => `<optgroup label="${group}">${sources.filter((item) => item.group === group).map((item) => `<option value="${escapeHtml(item.id)}"${item.id === sourceId ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</optgroup>`).join("");
@@ -214,15 +218,14 @@ export function createProgressMap(storage) {
           ? "Запиши первое выполнение — появятся первые клетки."
           : `До раскрытия: ${units(progress.remaining, source.kind)}`;
       host.innerHTML = `
-        <section class="card progress-map" aria-labelledby="progress-map-title">
-          <div class="progress-map-heading"><div><div class="eyebrow">Метод карты</div><h2 id="progress-map-title">Твой прогресс в клетках</h2></div><span class="map-all-time">Всё время</span></div>
-          <label class="map-source-label" for="map-source">Что считаем</label>
+        <section class="progress-map" aria-label="Карта прогресса">
+          <div class="map-source-heading"><label class="map-source-label" for="map-source">Что считаем</label><span>За всё время</span></div>
           <select id="map-source" class="map-source">${options}</select>
           <div class="map-total-row"><strong>${escapeHtml(units(source.total, source.kind))}</strong><span>${progress.completed} ${plural(progress.completed, ["карта открыта", "карты открыты", "карт открыто"])}</span></div>
-          <div class="map-art-switch" role="group" aria-label="Что скрыто в клетках"><button type="button" data-map-art="picture" aria-pressed="${mode === "picture"}">Рисунок</button><button type="button" data-map-art="text" aria-pressed="${mode === "text"}">Фраза</button></div>
-          <div class="map-mosaic-frame"><div class="map-mosaic" role="img" aria-label="${progress.filled === MAP_CELLS ? escapeHtml(artwork.name) : "Скрытое изображение"}. Открыто ${progress.filled} из ${MAP_CELLS} клеток"><div class="map-pixels" aria-hidden="true">${cells}</div></div></div>
+          <div class="map-mosaic-frame"><div class="map-mosaic ${mode === "picture" ? "map-picture" : "map-text"}${progress.filled === MAP_CELLS ? " complete" : ""}" role="img" aria-label="${progress.filled === MAP_CELLS ? escapeHtml(artwork.name) : "Скрытое изображение"}. Открыто ${progress.filled} из ${MAP_CELLS} клеток"><div class="map-pixels" aria-hidden="true">${cells}</div></div></div>
           <div class="map-progress-row"><span>${progress.filled} / ${MAP_CELLS} клеток</span><strong>${progress.percent}%</strong></div>
           <div class="map-unit">${unitCaption}</div>
+          <div class="map-art-switch" role="group" aria-label="Что скрыто в клетках"><button type="button" data-map-art="picture" aria-pressed="${mode === "picture"}">Рисунок</button><button type="button" data-map-art="text" aria-pressed="${mode === "text"}">Фраза</button></div>
           <div class="map-chapter-nav" role="group" aria-label="Карты прогресса"><button type="button" data-map-page="prev" aria-label="Предыдущая карта"${progress.page === 0 ? " disabled" : ""}>←</button><span>Карта ${progress.page + 1}</span><button type="button" data-map-page="next" aria-label="Следующая карта"${progress.page >= progress.lastPage ? " disabled" : ""}>→</button></div>
           <div class="map-discovery${progress.filled === MAP_CELLS ? " complete" : ""}" role="status">${escapeHtml(status)}</div>
           <p class="map-help">${source.kind === "sessions" ? "Учитываются кардиозаписи с заполненным результатом. " : ""}Клетки заполняются из твоих записей за всё время. Пропуски не стирают накопленное.</p>

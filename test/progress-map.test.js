@@ -153,3 +153,21 @@ test("missing preferences, storage failures and HTML in user names cannot break 
   host.clickArt("text");
   assert.match(host.innerHTML, /data-map-art="text" aria-pressed="true"/);
 });
+
+test("animation only marks new progress, never opening the map or changing its artwork", () => {
+  const renderer = createProgressMap({ getItem: () => null, setItem() {} });
+  const host = createHost();
+  const state = sample();
+  renderer.render(host, state, today);
+  assert.doesNotMatch(host.innerHTML, /revealed fresh/);
+  assert.match(host.innerHTML, /map-mosaic map-picture/);
+  assert.match(host.innerHTML, /--tile-x:/);
+  state.days[today].workouts[0].sets.push(15);
+  renderer.render(host, state, today);
+  assert.equal((host.innerHTML.match(/revealed fresh/g) || []).length, 15);
+  renderer.render(host, state, today);
+  assert.doesNotMatch(host.innerHTML, /revealed fresh/);
+  host.clickArt("text");
+  assert.doesNotMatch(host.innerHTML, /revealed fresh/);
+  assert.match(host.innerHTML, /map-mosaic map-text/);
+});
