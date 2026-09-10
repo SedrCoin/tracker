@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAP_SIZE, MAP_CELLS, collectMapSources, mapProgress, mapRevealOrder, mapArtwork, createProgressMap } from "../src/progress-map.js";
+import { validateMapPhrase, layoutMapPhrase, phraseArtwork } from "../src/map-phrases.js";
 
 const today = "2026-09-10";
 const byId = (sources, id) => sources.find((source) => source.id === id);
@@ -101,7 +102,10 @@ function createHost() {
   let html = "";
   const nodes = new Map();
   const node = (key, dataset = {}) => {
-    if (!nodes.has(key)) nodes.set(key, { dataset, handlers: {}, addEventListener(type, fn) { this.handlers[type] = fn; }, focus() {} });
+    if (!nodes.has(key)) {
+      const value = key.startsWith("#") ? (html.match(new RegExp(`id="${key.slice(1)}"[^>]*value="([^"]*)"`))?.[1] || "") : "";
+      nodes.set(key, { dataset, value, handlers: {}, attributes: {}, addEventListener(type, fn) { this.handlers[type] = fn; }, setAttribute(name, value) { this.attributes[name] = value; }, focus() {} });
+    }
     return nodes.get(key);
   };
   return {
@@ -115,6 +119,10 @@ function createHost() {
     changeSource(value) { node("#map-source").handlers.change({ target: { value } }); },
     clickArt(value) { node(`[data-map-art]:${value}`).handlers.click(); },
     clickPage(value) { node(`[data-map-page]:${value}`).handlers.click(); },
+    setSize(value) { node("#map-cell-size").handlers.change({ target: { value } }); },
+    typePhrase(value) { node("#map-phrase-input").value = value; node("#map-phrase-input").handlers.input(); },
+    submitPhrase() { node("#map-phrase-form").handlers.submit({ preventDefault() {} }); },
+    autoPhrase() { node("#map-phrase-auto").handlers.click(); },
   };
 }
 
@@ -133,7 +141,7 @@ test("renderer hides unearned art, supports source/mode/page controls and rememb
   assert.equal((host.innerHTML.match(/class="map-pixel revealed/g) || []).length, 400);
   assert.match(host.innerHTML, /Открыто: Путь к вершине/);
   host.clickArt("text");
-  assert.match(host.innerHTML, /Открыто: ТЫ СМОГ/);
+  assert.match(host.innerHTML, /Открыто: Ты смог/);
   host.changeSource("exercise:reps:турник");
   assert.equal((host.innerHTML.match(/class="map-pixel revealed/g) || []).length, 5);
   const restoredHost = createHost();
@@ -170,4 +178,84 @@ test("animation only marks new progress, never opening the map or changing its a
   host.clickArt("text");
   assert.doesNotMatch(host.innerHTML, /revealed fresh/);
   assert.match(host.innerHTML, /map-mosaic map-text/);
+});
+
+test("cell sizes change map capacity while preserving all earned progress", () => {
+  for (const size of [12, 20, 28]) {
+    const progress = mapProgress(1625, 1, null, size);
+    assert.equal(progress.capacity, size * size);
+    assert.equal(progress.cells, 1625);
+    assert.equal(progress.page * progress.capacity + progress.filled, 1625);
+    const order = mapRevealOrder("size-check", size);
+    assert.equal(new Set(order).size, size * size);
+    assert.ok(order.every((position) => position >= 0 && position < size * size));
+    assert.equal(mapArtwork("picture", 0, "", size).colors.length, size * size);
+    assert.equal(mapArtwork("text", 0, "Моя новая фраза", size).colors.length, size * size);
+  }
+  assert.equal(mapProgress(10, 1, null, 0).capacity, 400);
+});
+
+test("custom phrases enforce 30 characters and wrap long words without overflowing", () => {
+  assert.equal(validateMapPhrase("Я".repeat(30)).valid, true);
+  assert.equal(validateMapPhrase("Я".repeat(31)).valid, false);
+  assert.equal(validateMapPhrase(" ").valid, false);
+  assert.equal(validateMapPhrase("Сила 💪").length, 6);
+  assert.doesNotThrow(() => phraseArtwork("Сила \uD800"));
+  assert.equal(validateMapPhrase("  Шаг  за шагом ").text, "Шаг за шагом");
+  for (const value of ["Ш".repeat(30), "НЕ ОСТАНАВЛИВАЙСЯ", "Stronger every single day", "Сильнее с каждым днём"]) {
+    const layout = layoutMapPhrase(value);
+    assert.equal(layout.lines.join("").replace(/ /g, ""), value.replace(/ /g, ""));
+    assert.ok(layout.lines.every((line) => Array.from(line).length <= 12));
+    assert.ok(layout.firstBaseline > 100);
+    assert.ok(layout.firstBaseline + (layout.lines.length - 1) * layout.lineHeight < 700);
+  }
+});
+
+test("custom phrase SVG treats markup and quotes as literal text", () => {
+  const art = phraseArtwork('<svg onload="x"> & \'');
+  const svg = decodeURIComponent(art.image.split(",")[1]);
+  assert.doesNotMatch(svg, /<svg onload=/);
+  assert.match(svg, /&lt;svg/);
+  assert.match(svg, /&quot;/);
+  assert.match(svg, /&amp;/);
+  assert.ok(!art.image.includes("'"));
+});
+
+test("phrases save per source, drafts survive resizing, and settings restore", () => {
+  const memory = new Map();
+  const storage = { getItem: (key) => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) };
+  const renderer = createProgressMap(storage);
+  const host = createHost();
+  renderer.render(host, sample(), today);
+  host.clickArt("text");
+  host.typePhrase("Сила в каждом дне");
+  host.setSize("12");
+  assert.match(host.innerHTML, /value="Сила в каждом дне"/);
+  host.submitPhrase();
+  host.changeSource("exercise:reps:турник");
+  host.typePhrase("Ещё один подход");
+  host.submitPhrase();
+  host.typePhrase("Я".repeat(31));
+  assert.equal(host.querySelector("#map-phrase-save").disabled, true);
+  host.submitPhrase();
+  assert.match(host.querySelector("#map-phrase-error").textContent, /Максимум 30/);
+  const restored = createHost();
+  createProgressMap(storage).render(restored, sample(), today);
+  assert.match(restored.innerHTML, /value="Ещё один подход"/);
+  assert.match(restored.innerHTML, /--map-size:12/);
+  restored.autoPhrase();
+  assert.doesNotMatch(restored.innerHTML, /value="Ещё один подход"/);
+  restored.changeSource("all-reps");
+  assert.match(restored.innerHTML, /value="Сила в каждом дне"/);
+});
+
+test("a failed storage write does not falsely report a custom phrase as saved", () => {
+  const host = createHost();
+  const renderer = createProgressMap({ getItem: () => null, setItem() { throw new Error("full"); } });
+  renderer.render(host, sample(), today);
+  host.clickArt("text");
+  host.typePhrase("Моя фраза");
+  host.submitPhrase();
+  assert.match(host.querySelector("#map-phrase-error").textContent, /Не удалось сохранить/);
+  assert.notEqual(host.querySelector("#map-phrase-save").textContent, "Сохранено");
 });

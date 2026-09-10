@@ -1,8 +1,11 @@
 import { addDays } from "./logic.js";
 import { SUMMIT_COLORS } from "./progress-art.js";
+import { MAX_PHRASE_LENGTH, DEFAULT_PHRASES, validateMapPhrase, phraseArtwork } from "./map-phrases.js?v=20260910-03";
 
 export const MAP_SIZE = 20;
 export const MAP_CELLS = MAP_SIZE * MAP_SIZE;
+export const MAP_SIZES = [12, 20, 28];
+const resolveSize = (value) => MAP_SIZES.includes(Number(value)) ? Number(value) : MAP_SIZE;
 const PREFS_KEY = "tracker.progress-map.v1";
 const MAX = Number.MAX_SAFE_INTEGER;
 const positiveInteger = (value) => {
@@ -74,16 +77,18 @@ export function collectMapSources(state = {}, today) {
   return [allReps, ...exercises.values(), ...habits.values(), ...challenges];
 }
 
-export function mapProgress(total, cellsPerUnit = 1, requestedPage = null) {
+export function mapProgress(total, cellsPerUnit = 1, requestedPage = null, gridSize = MAP_SIZE) {
+  const size = resolveSize(gridSize);
+  const capacity = size * size;
   const multiplier = cellsPerUnit === 10 ? 10 : 1;
   const cells = Math.min(MAX, positiveInteger(total) * multiplier);
-  const completed = Math.floor(cells / MAP_CELLS);
+  const completed = Math.floor(cells / capacity);
   // Keep a just-completed picture visible until the next real action arrives.
-  const currentPage = Math.max(0, Math.ceil(cells / MAP_CELLS) - 1);
+  const currentPage = Math.max(0, Math.ceil(cells / capacity) - 1);
   const lastPage = completed;
   const page = requestedPage == null ? currentPage : Math.min(lastPage, positiveInteger(requestedPage));
-  const filled = Math.max(0, Math.min(MAP_CELLS, cells - page * MAP_CELLS));
-  return { cells, completed, currentPage, lastPage, page, filled, percent: Math.floor(filled / MAP_CELLS * 100), remaining: Math.ceil((MAP_CELLS - filled) / multiplier) };
+  const filled = Math.max(0, Math.min(capacity, cells - page * capacity));
+  return { size, capacity, cells, completed, currentPage, lastPage, page, filled, percent: Math.floor(filled / capacity * 100), remaining: Math.ceil((capacity - filled) / multiplier) };
 }
 
 function hash(value) {
@@ -94,19 +99,20 @@ function hash(value) {
 
 // Breadth-first expansion keeps every new cell attached to the existing patch.
 // A stable seed preserves the picture and filled positions on every reload.
-export function mapRevealOrder(seed) {
+export function mapRevealOrder(seed, gridSize = MAP_SIZE) {
+  const size = resolveSize(gridSize);
   const number = hash(seed);
-  const start = (14 + number % 3) * MAP_SIZE + 3 + (number >>> 4) % 5;
+  const start = (Math.floor(size * .7) + number % Math.ceil(size * .15)) * size + Math.floor(size * .15) + (number >>> 4) % Math.ceil(size * .25);
   const order = [start];
   const seen = new Set(order);
   const directions = [[0, -1], [1, 0], [-1, 0], [0, 1]];
   const offset = number % directions.length;
   for (let i = 0; i < order.length; i += 1) {
-    const x = order[i] % MAP_SIZE, y = Math.floor(order[i] / MAP_SIZE);
+    const x = order[i] % size, y = Math.floor(order[i] / size);
     for (let j = 0; j < directions.length; j += 1) {
       const [dx, dy] = directions[(j + offset) % directions.length];
-      const nx = x + dx, ny = y + dy, next = ny * MAP_SIZE + nx;
-      if (nx < 0 || nx >= MAP_SIZE || ny < 0 || ny >= MAP_SIZE || seen.has(next)) continue;
+      const nx = x + dx, ny = y + dy, next = ny * size + nx;
+      if (nx < 0 || nx >= size || ny < 0 || ny >= size || seen.has(next)) continue;
       seen.add(next);
       order.push(next);
     }
@@ -114,50 +120,19 @@ export function mapRevealOrder(seed) {
   return order;
 }
 
-// Compact Cyrillic glyphs are text, rendered directly into the same cell grid.
-const GLYPHS = {
-  А: ["0110", "1001", "1111", "1001", "1001"],
-  В: ["1110", "1001", "1110", "1001", "1110"],
-  Г: ["1111", "1000", "1000", "1000", "1000"],
-  Д: ["0110", "0110", "1010", "1111", "1001"],
-  Е: ["1111", "1000", "1110", "1000", "1111"],
-  З: ["1110", "0001", "0110", "0001", "1110"],
-  И: ["1001", "1011", "1101", "1001", "1001"],
-  Л: ["0011", "0101", "0101", "1001", "1001"],
-  М: ["1001", "1111", "1111", "1001", "1001"],
-  Н: ["1001", "1001", "1111", "1001", "1001"],
-  О: ["0110", "1001", "1001", "1001", "0110"],
-  С: ["0111", "1000", "1000", "1000", "0111"],
-  Т: ["1111", "0110", "0110", "0110", "0110"],
-  Ш: ["10101", "10101", "10101", "10101", "11111"],
-  Ы: ["10001", "10001", "11101", "10101", "11101"],
-  Ь: ["1000", "1000", "1110", "1001", "1110"],
-  Я: ["0111", "1001", "0111", "0101", "1001"],
-};
-const PHRASES = [["ТЫ", "СМОГ"], ["ТВОЯ", "СИЛА"], ["ДЕНЬ", "ЗА", "ДНЕМ"]];
-const TEXT_PALETTES = [["#e4f2d5", "#cde7b5", "#245620"], ["#e1eefb", "#c7dff6", "#24418c"], ["#fff0d5", "#ffe0a4", "#85430e"]];
-
-export function mapArtwork(mode, page = 0) {
-  if (mode !== "text") return { name: "Путь к вершине", colors: SUMMIT_COLORS };
-  const index = positiveInteger(page) % PHRASES.length;
-  const lines = PHRASES[index];
-  const [background, accent, ink] = TEXT_PALETTES[index];
-  const colors = Array.from({ length: MAP_CELLS }, (_, i) => (Math.floor(i / MAP_SIZE) < 2 || Math.floor(i / MAP_SIZE) > 17) ? accent : background);
-  const lineGap = lines.length === 3 ? 1 : 3;
-  const height = lines.length * 5 + (lines.length - 1) * lineGap;
-  const top = Math.floor((MAP_SIZE - height) / 2);
-  lines.forEach((line, lineIndex) => {
-    const glyphs = [...line].map((char) => GLYPHS[char]);
-    const width = glyphs.reduce((sum, glyph) => sum + glyph[0].length, 0) + glyphs.length - 1;
-    let left = Math.floor((MAP_SIZE - width) / 2);
-    for (const glyph of glyphs) {
-      glyph.forEach((row, y) => [...row].forEach((pixel, x) => {
-        if (pixel === "1") colors[(top + lineIndex * (5 + lineGap) + y) * MAP_SIZE + left + x] = ink;
-      }));
-      left += glyph[0].length + 1;
-    }
+export function mapArtwork(mode, page = 0, customPhrase = "", gridSize = MAP_SIZE) {
+  const size = resolveSize(gridSize);
+  if (mode === "text") {
+    const custom = validateMapPhrase(customPhrase);
+    const phrase = custom.valid ? custom.text : DEFAULT_PHRASES[positiveInteger(page) % DEFAULT_PHRASES.length];
+    return { ...phraseArtwork(phrase), colors: new Array(size * size).fill("#f3f7f1") };
+  }
+  const colors = Array.from({ length: size * size }, (_, index) => {
+    const x = Math.min(MAP_SIZE - 1, Math.floor(((index % size) + .5) * MAP_SIZE / size));
+    const y = Math.min(MAP_SIZE - 1, Math.floor((Math.floor(index / size) + .5) * MAP_SIZE / size));
+    return SUMMIT_COLORS[y * MAP_SIZE + x];
   });
-  return { name: lines.join(" "), colors };
+  return { name: "Путь к вершине", colors };
 }
 
 function plural(number, forms) {
@@ -175,10 +150,16 @@ export function createProgressMap(storage) {
   try { preferences = JSON.parse(storage.getItem(PREFS_KEY)) || {}; } catch { /* Preferences are optional. */ }
   let sourceId = typeof preferences.sourceId === "string" ? preferences.sourceId : "all-reps";
   let mode = preferences.mode === "text" ? "text" : "picture";
+  let gridSize = resolveSize(preferences.gridSize);
+  const phrases = new Map(Object.entries(preferences.phrases && typeof preferences.phrases === "object" ? preferences.phrases : {})
+    .filter(([, value]) => typeof value === "string" && validateMapPhrase(value).valid)
+    .map(([key, value]) => [key, validateMapPhrase(value).text]));
+  let editorOpen = false;
+  const phraseDrafts = new Map();
   let selectedPage = null;
   const lastCounts = new Map();
   const savePreferences = () => {
-    try { storage.setItem(PREFS_KEY, JSON.stringify({ sourceId, mode })); } catch { /* Works in memory when storage is full. */ }
+    try { storage.setItem(PREFS_KEY, JSON.stringify({ sourceId, mode, gridSize, phrases: Object.fromEntries(phrases) })); return true; } catch { return false; }
   };
 
   return {
@@ -188,23 +169,26 @@ export function createProgressMap(storage) {
       sourceId = source.id;
       const previousCount = lastCounts.get(sourceId);
       if (previousCount != null && previousCount !== source.total) selectedPage = null;
-      const progress = mapProgress(source.total, source.cellsPerUnit, selectedPage);
+      const progress = mapProgress(source.total, source.cellsPerUnit, selectedPage, gridSize);
+      const capacity = progress.capacity;
       lastCounts.set(sourceId, source.total);
-      const artwork = mapArtwork(mode, progress.page);
-      const order = mapRevealOrder(`${source.id}:${progress.page}`);
-      const ranks = new Array(MAP_CELLS);
+      const customPhrase = phrases.get(sourceId) || "";
+      const phraseDraft = phraseDrafts.get(sourceId) ?? customPhrase;
+      const artwork = mapArtwork(mode, progress.page, customPhrase, gridSize);
+      const order = mapRevealOrder(`${source.id}:${progress.page}`, gridSize);
+      const ranks = new Array(capacity);
       order.forEach((position, rank) => { ranks[position] = rank; });
       const hasNewProgress = previousCount != null && source.total > previousCount;
       const priorFilled = hasNewProgress
-        ? Math.max(0, Math.min(MAP_CELLS, previousCount * source.cellsPerUnit - progress.page * MAP_CELLS))
+        ? Math.max(0, Math.min(capacity, previousCount * source.cellsPerUnit - progress.page * capacity))
         : progress.filled;
       const animationStart = Math.max(priorFilled, progress.filled - 80);
       const cells = artwork.colors.map((color, position) => {
         const rank = ranks[position];
         const revealed = rank < progress.filled;
         const fresh = hasNewProgress && revealed && rank >= animationStart;
-        const x = (position % MAP_SIZE) / (MAP_SIZE - 1) * 100;
-        const y = Math.floor(position / MAP_SIZE) / (MAP_SIZE - 1) * 100;
+        const x = (position % gridSize) / (gridSize - 1) * 100;
+        const y = Math.floor(position / gridSize) / (gridSize - 1) * 100;
         // Each earned tile shows its exact patch of the original artwork. The
         // sampled palette remains an offline fallback and the phrase renderer.
         return `<span class="map-pixel${revealed ? " revealed" : ""}${fresh ? " fresh" : ""}"${revealed ? ` style="--pixel-color:${color};--tile-x:${x}%;--tile-y:${y}%;--pixel-delay:${Math.max(0, rank - animationStart) * 2}ms"` : ""}></span>`;
@@ -212,7 +196,7 @@ export function createProgressMap(storage) {
       const groups = [...new Set(sources.map((item) => item.group))];
       const options = groups.map((group) => `<optgroup label="${group}">${sources.filter((item) => item.group === group).map((item) => `<option value="${escapeHtml(item.id)}"${item.id === sourceId ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</optgroup>`).join("");
       const unitCaption = source.kind === "reps" ? "1 повтор = 1 клетка" : source.kind === "sessions" ? "1 тренировка = 10 клеток" : "1 день = 10 клеток";
-      const status = progress.filled === MAP_CELLS
+      const status = progress.filled === capacity
         ? `Открыто: ${artwork.name}`
         : source.total === 0
           ? "Запиши первое выполнение — появятся первые клетки."
@@ -222,12 +206,13 @@ export function createProgressMap(storage) {
           <div class="map-source-heading"><label class="map-source-label" for="map-source">Что считаем</label><span>За всё время</span></div>
           <select id="map-source" class="map-source">${options}</select>
           <div class="map-total-row"><strong>${escapeHtml(units(source.total, source.kind))}</strong><span>${progress.completed} ${plural(progress.completed, ["карта открыта", "карты открыты", "карт открыто"])}</span></div>
-          <div class="map-mosaic-frame"><div class="map-mosaic ${mode === "picture" ? "map-picture" : "map-text"}${progress.filled === MAP_CELLS ? " complete" : ""}" role="img" aria-label="${progress.filled === MAP_CELLS ? escapeHtml(artwork.name) : "Скрытое изображение"}. Открыто ${progress.filled} из ${MAP_CELLS} клеток"><div class="map-pixels" aria-hidden="true">${cells}</div></div></div>
-          <div class="map-progress-row"><span>${progress.filled} / ${MAP_CELLS} клеток</span><strong>${progress.percent}%</strong></div>
+          <div class="map-tools"><div><span class="map-tool-label">Вид карты</span><div class="map-art-switch" role="group" aria-label="Что скрыто в клетках"><button type="button" data-map-art="picture" aria-pressed="${mode === "picture"}">Рисунок</button><button type="button" data-map-art="text" aria-pressed="${mode === "text"}">Фраза</button></div></div><label class="map-size-label" for="map-cell-size"><span class="map-tool-label">Размер клеток</span><select id="map-cell-size">${MAP_SIZES.map((size, index) => `<option value="${size}"${size === gridSize ? " selected" : ""}>${["Крупные", "Средние", "Мелкие"][index]} · ${size}×${size}</option>`).join("")}</select></label></div>
+          ${mode === "text" ? `<details class="map-phrase-editor"${editorOpen ? " open" : ""}><summary>Своя фраза<span>до ${MAX_PHRASE_LENGTH} символов</span></summary><form id="map-phrase-form" novalidate><label class="map-tool-label" for="map-phrase-input">Фраза для «${escapeHtml(source.name)}»</label><input id="map-phrase-input" type="text" value="${escapeHtml(phraseDraft)}" maxlength="120" placeholder="Например: Сильнее с каждым днём" autocomplete="off" aria-describedby="map-phrase-counter map-phrase-error" /><div class="map-phrase-meta"><span id="map-phrase-error" role="alert"></span><span id="map-phrase-counter">${Array.from(phraseDraft).length} / ${MAX_PHRASE_LENGTH}</span></div><div class="map-phrase-actions"><button type="submit" id="map-phrase-save" disabled>${customPhrase ? "Сохранено" : "Применить"}</button><button type="button" id="map-phrase-auto"${customPhrase ? "" : " disabled"}>Автофразы</button></div></form></details>` : ""}
+          <div class="map-mosaic-frame"><div class="map-mosaic ${mode === "picture" ? "map-picture" : "map-text"}${progress.filled === capacity ? " complete" : ""}" style="--map-size:${gridSize};--map-image-scale:${gridSize * 100}%;${artwork.image ? `--phrase-image:url('${artwork.image}');` : ""}" role="img" aria-label="${progress.filled === capacity ? escapeHtml(artwork.name) : "Скрытое изображение"}. Открыто ${progress.filled} из ${capacity} клеток"><div class="map-pixels" aria-hidden="true">${cells}</div></div></div>
+          <div class="map-progress-row"><span>${progress.filled} / ${capacity} клеток</span><strong>${progress.percent}%</strong></div>
           <div class="map-unit">${unitCaption}</div>
-          <div class="map-art-switch" role="group" aria-label="Что скрыто в клетках"><button type="button" data-map-art="picture" aria-pressed="${mode === "picture"}">Рисунок</button><button type="button" data-map-art="text" aria-pressed="${mode === "text"}">Фраза</button></div>
           <div class="map-chapter-nav" role="group" aria-label="Карты прогресса"><button type="button" data-map-page="prev" aria-label="Предыдущая карта"${progress.page === 0 ? " disabled" : ""}>←</button><span>Карта ${progress.page + 1}</span><button type="button" data-map-page="next" aria-label="Следующая карта"${progress.page >= progress.lastPage ? " disabled" : ""}>→</button></div>
-          <div class="map-discovery${progress.filled === MAP_CELLS ? " complete" : ""}" role="status">${escapeHtml(status)}</div>
+          <div class="map-discovery${progress.filled === capacity ? " complete" : ""}" role="status">${escapeHtml(status)}</div>
           <p class="map-help">${source.kind === "sessions" ? "Учитываются кардиозаписи с заполненным результатом. " : ""}Клетки заполняются из твоих записей за всё время. Пропуски не стирают накопленное.</p>
         </section>`;
       const repaint = (focusSelector) => {
@@ -249,6 +234,56 @@ export function createProgressMap(storage) {
         selectedPage = progress.page + (button.dataset.mapPage === "prev" ? -1 : 1);
         repaint(`[data-map-page="${button.dataset.mapPage}"]`);
       }));
+      host.querySelector("#map-cell-size").addEventListener("change", (event) => {
+        gridSize = resolveSize(event.target.value);
+        selectedPage = null;
+        savePreferences();
+        repaint("#map-cell-size");
+      });
+      if (mode === "text") {
+        const editor = host.querySelector(".map-phrase-editor");
+        const input = host.querySelector("#map-phrase-input");
+        const save = host.querySelector("#map-phrase-save");
+        const error = host.querySelector("#map-phrase-error");
+        const counter = host.querySelector("#map-phrase-counter");
+        editor.addEventListener("toggle", () => { editorOpen = editor.open; });
+        const validate = () => {
+          const result = validateMapPhrase(input.value);
+          counter.textContent = `${result.length} / ${MAX_PHRASE_LENGTH}`;
+          error.textContent = result.length ? result.error : "";
+          input.setAttribute("aria-invalid", String(!!result.length && !result.valid));
+          save.disabled = !result.valid || result.text === customPhrase;
+          save.textContent = result.valid && result.text === customPhrase ? "Сохранено" : "Применить";
+          return result;
+        };
+        input.addEventListener("input", () => { phraseDrafts.set(sourceId, input.value); validate(); });
+        host.querySelector("#map-phrase-form").addEventListener("submit", (event) => {
+          event.preventDefault();
+          const result = validate();
+          if (!result.valid) { error.textContent = result.error; input.focus(); return; }
+          phrases.set(sourceId, result.text);
+          if (!savePreferences()) {
+            if (customPhrase) phrases.set(sourceId, customPhrase); else phrases.delete(sourceId);
+            error.textContent = "Не удалось сохранить фразу на этом устройстве.";
+            return;
+          }
+          phraseDrafts.delete(sourceId);
+          editorOpen = true;
+          repaint("#map-phrase-input");
+        });
+        host.querySelector("#map-phrase-auto").addEventListener("click", () => {
+          phrases.delete(sourceId);
+          if (!savePreferences()) {
+            if (customPhrase) phrases.set(sourceId, customPhrase);
+            error.textContent = "Не удалось сохранить настройку на этом устройстве.";
+            return;
+          }
+          phraseDrafts.delete(sourceId);
+          editorOpen = true;
+          repaint("#map-phrase-input");
+        });
+        validate();
+      }
     },
   };
 }

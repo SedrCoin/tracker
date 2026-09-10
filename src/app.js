@@ -3,7 +3,7 @@ import * as L from "./logic.js";
 import * as Charts from "./charts.js";
 import * as Sync from "./sync.js";
 import { CHALLENGE_TEMPLATES, challengeTemplateById } from "./challenge-catalog.js";
-import { createProgressMap } from "./progress-map.js?v=20260910-02";
+import { createProgressMap } from "./progress-map.js?v=20260910-03";
 
 const store = createStore(window.localStorage);
 const progressMap = createProgressMap(window.localStorage);
@@ -27,7 +27,7 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260910-02";
+const APP_VERSION = "20260910-03";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsView = "stats"; // stats | map
 try {
