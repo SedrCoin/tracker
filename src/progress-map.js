@@ -1,6 +1,6 @@
 import { addDays } from "./logic.js";
 import { SUMMIT_COLORS } from "./progress-art.js";
-import { MAX_PHRASE_LENGTH, PHRASE_BACKGROUND, DEFAULT_PHRASES, validateMapPhrase, phraseArtwork } from "./map-phrases.js?v=20260910-04";
+import { MAX_PHRASE_LENGTH, PHRASE_BACKGROUND, DEFAULT_PHRASES, validateMapPhrase, phraseArtwork } from "./map-phrases.js?v=20261006-02";
 
 export const MAP_SIZE = 20;
 export const MAP_CELLS = MAP_SIZE * MAP_SIZE;
@@ -65,7 +65,7 @@ export function collectMapSources(state = {}, today) {
     total: [...exercises.values()].filter((source) => source.kind === "reps").reduce((sum, source) => Math.min(MAX, sum + source.total), 0),
     cellsPerUnit: 1,
   };
-  const challenges = (state.challenges || []).filter((challenge) => challenge?.id != null).map((challenge) => {
+  const challenges = (state.challenges || []).filter((challenge) => challenge?.id != null && !challenge.archivedByRoutine).map((challenge) => {
     const start = challenge.startDate || challenge.anchorDate;
     const duration = Math.min(36500, positiveInteger(challenge.durationDays || challenge.targetDays));
     const end = start && duration ? addDays(start, duration - 1) : today;

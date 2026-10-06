@@ -1,4 +1,4 @@
-import { addDays, defaultState } from "./logic.js";
+import { addDays, defaultState, routineHabits } from "./logic.js";
 
 const KEY = "tracker.state.v2";
 const META_KEY = "tracker.meta.v2";
@@ -235,6 +235,47 @@ function migrateLegacyChallenge(s) {
   return true;
 }
 
+function migrateRoutine(s) {
+  if (s.settings.routineVersion === 1) return false;
+  // Сохраняем существующие ID: отметки прежних привычек остаются в истории.
+  if (!Array.isArray(s.habits)) return false;
+  const defaults = routineHabits();
+  for (const habit of defaults) {
+    const existing = s.habits.find((h) => h.id === habit.id || normName(h.name) === normName(habit.name)
+      || (habit.id === "pushups" && /отжиман/.test(normName(h.name)))
+      || (habit.id === "abs" && /пресс/.test(normName(h.name)))
+      || (habit.id === "reading" && /чтени/.test(normName(h.name))));
+    if (existing) Object.assign(existing, habit, { id: existing.id });
+    else s.habits.push({ ...habit });
+  }
+  for (const ch of s.challenges || []) {
+    if (/^legacy-75(?:-|$)/.test(ch.id || "") || ch.templateId === "75-hard" || /^(челлендж\s*75|75\s*hard)$/i.test(ch.name || "")) {
+      ch.status = "stopped";
+      ch.archivedByRoutine = true;
+    }
+  }
+  if (s.settings.challenge) s.settings.challenge.enabled = false;
+  s.settings.routineVersion = 1;
+  s.settings.routineStartedAt = todayISO();
+  return true;
+}
+
+function restoreOwnerCounters(s) {
+  if (!isOwnerProfile(s.settings.profile) || s.settings.ownerCountersVersion === 1) return false;
+  const counters = s.settings.counters;
+  const originals = [
+    { id: "no-alcohol", name: "Без алкоголя", startDate: "2025-09-27", tone: "alco" },
+    { id: "no-sprays", name: "Без спреев", startDate: "2026-05-02", tone: "spray" },
+  ];
+  for (const original of originals) {
+    const existing = counters.find((c) => c.id === original.id || normName(c.name) === normName(original.name));
+    if (!existing) counters.push(original);
+    else if (!existing.startDate) existing.startDate = original.startDate;
+  }
+  s.settings.ownerCountersVersion = 1;
+  return true;
+}
+
 function migrateState(s) {
   let changed = false;
   if (!s.settings) s.settings = {};
@@ -283,12 +324,14 @@ function migrateState(s) {
     s.measurements = [];
     changed = true;
   }
-  if (stripPersonalStarterData(s)) {
+  if (!s.settings.routineVersion && stripPersonalStarterData(s)) {
     changed = true;
   }
   if (migrateLegacyChallenge(s)) {
     changed = true;
   }
+  if (migrateRoutine(s)) changed = true;
+  if (restoreOwnerCounters(s)) changed = true;
   return changed;
 }
 

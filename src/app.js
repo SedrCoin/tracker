@@ -3,7 +3,7 @@ import * as L from "./logic.js";
 import * as Charts from "./charts.js";
 import * as Sync from "./sync.js";
 import { CHALLENGE_TEMPLATES, challengeTemplateById } from "./challenge-catalog.js";
-import { createProgressMap } from "./progress-map.js?v=20260910-04";
+import { createProgressMap } from "./progress-map.js?v=20261006-02";
 
 const store = createStore(window.localStorage);
 const progressMap = createProgressMap(window.localStorage);
@@ -27,7 +27,7 @@ function withDetectedSyncConfig(cfg) {
 
 let syncCfg = withDetectedSyncConfig(Sync.loadSyncConfig(window.localStorage));
 let syncStatus = "idle"; // idle | syncing | ok | offline
-const APP_VERSION = "20260910-04";
+const APP_VERSION = "20261006-02";
 let todayRoute = "main"; // main | workouts | nutrition
 let statsView = "stats"; // stats | map
 try {
@@ -539,14 +539,14 @@ function renderToday() {
   const lastW = L.lastWeighInValue(s.weighIns, currentDay);
 
   screens.today.innerHTML = `
-    <button class="account-hero" id="open-profile" aria-label="Открыть профиль">
+    <div class="home-kicker">ЛИЧНЫЙ РИТМ <span>День за днём</span></div>
+    <div class="account-header"><button class="account-hero" id="open-profile" aria-label="Открыть профиль">
       <div class="avatar">${profileAvatar(profile)}</div>
       <div class="account-title">
         <div class="big">${big}</div>
         <div class="sub">${sub}</div>
       </div>
-      <span class="bell-btn" id="account-sync" aria-label="Синхронизировать">${ICON.bell}<i></i></span>
-    </button>
+    </button><button class="bell-btn" id="account-sync" aria-label="Синхронизировать">${ICON.bell}</button></div>
     <div class="day-nav">
       <button class="navbtn" id="day-prev" aria-label="Назад">${ICON.chevL}</button>
       <button class="calendar-open-btn" id="open-calendar" aria-label="Открыть календарь">${dayMonth(currentDay)}</button>
@@ -554,6 +554,9 @@ function renderToday() {
     </div>
     <div id="day-calendar-layer">${calendarOpen ? calendarHtml(s, currentDay) : ""}</div>
 
+    ${counterCards ? `<div class="counters personal-counters">${counterCards}</div>` : ""}
+    <div id="today-habits"></div>
+    <div class="support-heading">Ещё о твоём дне</div>
     <div class="counters">
       ${mainChallenge ? `<div class="counter hero challenge-photo-${challengePhoto}" data-open-challenge="${esc(mainChallenge.id)}" style="--challenge-progress: ${challengePercent(mainChallenge, today)}deg; ${customChallengeBg}">
         <div class="c-label">${esc(mainChallenge.name)}</div>
@@ -561,7 +564,6 @@ function renderToday() {
         <div class="c-sub">${L.challengeCompletedCount(mainChallenge)} выполнено · стрик ${L.challengeStreak(mainChallenge, today)}</div>
         ${currentDay === today && challengeCanCheck(mainChallenge, today) ? `<button class="hero-check ${mainChallenge.checks && mainChallenge.checks[today] ? "done" : ""}" data-challenge-check="${esc(mainChallenge.id)}">${mainChallenge.checks && mainChallenge.checks[today] ? "Готово" : "Выполнено"}</button>` : ""}
       </div>` : ""}
-      ${counterCards}
     </div>
     ${otherChallenges.length ? `<div class="today-challenge-list">${otherChallenges.map((ch) => challengeCardHtml(ch, { compact: true })).join("")}</div>` : ""}
 
@@ -574,15 +576,14 @@ function renderToday() {
         </div>
         ${isWeigh ? `<span class="badge-due">Сегодня</span>` : ""}
       </div>
-      ${isWeigh ? `<div class="weigh-input">
-        <input id="weigh-val" type="number" step="0.1" inputmode="decimal" placeholder="кг" />
-        <button class="btn blue" id="weigh-save">Записать</button></div>` : ""}
+      <div class="weigh-input">
+        <input id="weigh-val" type="number" step="0.1" inputmode="decimal" placeholder="Вес, кг" />
+        <button class="btn blue" id="weigh-save">Записать</button></div>
     </div>
 
     <div id="today-workouts"></div>
     <div id="today-measurements"></div>
     <div id="today-nutrition"></div>
-    <div id="today-habits"></div>
     <div id="today-note"></div>
   `;
 
@@ -599,10 +600,10 @@ function renderToday() {
     renderToday();
   });
 
-  if (isWeigh) {
+  {
     document.getElementById("weigh-save").addEventListener("click", () => {
       const val = parseFloat(document.getElementById("weigh-val").value);
-      if (!isFinite(val)) return;
+      if (!isFinite(val) || val <= 0 || val > 500) { notify("Введи вес от 0 до 500 кг", "error"); return; }
       const st = store.get();
       st.weighIns = st.weighIns.filter((x) => x.date !== currentDay);
       st.weighIns.push({ date: currentDay, weight: val });
@@ -615,7 +616,9 @@ function renderToday() {
   const accountSync = document.getElementById("account-sync");
   if (accountSync) accountSync.addEventListener("click", async (e) => {
     e.stopPropagation();
+    if (!Sync.isConfigured(syncCfg)) { show("settings"); notify("Подключи синхронизацию в настройках", "warn"); return; }
     await pushNow();
+    notify(syncStatus === "ok" ? "Данные синхронизированы" : "Нет связи с сервером. Данные сохранены на устройстве", syncStatus === "ok" ? "ok" : "warn");
     renderToday();
   });
   document.getElementById("open-calendar").addEventListener("click", () => {
@@ -1199,7 +1202,7 @@ function wireNutrition() {
     b.addEventListener("click", () => {
       addingMeal = b.dataset.addMeal;
       selectedFood = null;
-      manualOpen = false;
+      manualOpen = !Sync.isConfigured(syncCfg);
       renderNutritionDetail();
     })
   );
@@ -1239,7 +1242,7 @@ function wireAddPanel() {
     ma.addEventListener("click", () => {
       const name = document.getElementById("nm-name").value.trim();
       const kcal = parseInt(document.getElementById("nm-kcal").value, 10) || 0;
-      if (!name || !kcal) return;
+      if (!name || kcal <= 0) { notify("Укажи название и калории продукта", "warn"); return; }
       addEntry(addingMeal, {
         name,
         grams: 0,
@@ -1949,41 +1952,52 @@ function wireSetSwipe() {
 function renderHabits() {
   const s = store.get();
   const day = getDay(s, currentDay);
-  const items = s.habits
-    .map((h) => {
-      const done = !!(day.habits && day.habits[h.id]);
-      const streak = L.habitStreak(s.days, h.id, currentDay);
-      return `<button class="habit ${done ? "done" : ""}" data-habit="${esc(h.id)}">
-        <span class="check">${ICON.check}</span>
-        <span class="h-name">${esc(h.name)}</span>
-        <span class="streak ${streak > 0 ? "" : "hidden-streak"}" id="streak-${esc(h.id)}">${ICON.flame}${streak}</span>
-      </button>`;
-    })
-    .join("");
+  const daily = s.habits.filter((h) => h.frequency !== "weekly");
+  const weekly = s.habits.filter((h) => h.frequency === "weekly");
+  const count = daily.filter((h) => day.habits?.[h.id]).length;
+  const percent = daily.length ? Math.round(count / daily.length * 100) : 0;
+  const future = currentDay > todayISO();
+  const row = (h, index) => {
+    const done = !!day.habits?.[h.id];
+    const streak = L.habitStreak(s.days, h.id, currentDay);
+    return `<button class="habit ${done ? "done" : ""}" data-habit="${esc(h.id)}" aria-pressed="${done}" ${future ? "disabled" : ""}>
+      <span class="habit-symbol ${esc(h.category || "mind")}">${h.category === "body" ? "↗" : h.id === "chess" ? "♞" : h.id === "fr" ? "Aa" : h.id === "reading" ? "≡" : String(index + 1).padStart(2, "0")}</span>
+      <span class="habit-copy"><span class="h-name">${esc(h.name)}</span><span class="habit-meta">${done ? "Выполнено" : "Каждый день"}${streak ? ` · серия ${streak} ${pluralRu(streak, "день", "дня", "дней")}` : ""}</span></span>
+      <span class="check">${ICON.check}</span>
+    </button>`;
+  };
+  const groups = [
+    { title: "Тело", habits: daily.filter((h) => h.category === "body") },
+    { title: "Ум и развитие", habits: daily.filter((h) => h.category !== "body") },
+  ];
   document.getElementById("today-habits").innerHTML = `
-    <div class="card">
-      <div class="section-head"><div class="title">Привычки</div></div>
-      ${items}
-    </div>`;
-
-  const today = todayISO();
-  document.querySelectorAll("[data-habit]").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.habit;
-      const st = store.get();
-      const d = getDay(st, currentDay);
-      d.habits[id] = !d.habits[id];
-      saveState(st);
-      // обновление на месте
-      btn.classList.toggle("done", !!d.habits[id]);
-      const streak = L.habitStreak(st.days, id, currentDay);
-      const pill = document.getElementById("streak-" + id);
-      pill.classList.toggle("hidden-streak", streak <= 0);
-      pill.innerHTML = ICON.flame + streak;
-      if (currentDay === today && st.habits.length && st.habits.every((h) => d.habits[h.id]))
-        celebrate();
-    })
-  );
+    <section class="rhythm-hero" style="--day-progress:${percent}%">
+      <div class="rhythm-top"><span>ТВОЙ РЕЖИМ</span><span>${future ? "План на день" : percent === 100 && daily.length ? "Отличный день" : "Маленькие шаги каждый день"}</span></div>
+      <div class="rhythm-main"><div><h2>${percent === 100 && daily.length ? "Всё получилось." : "Держи свой ритм."}</h2><p>${future ? "Отметки будут доступны в этот день." : "Каждая отметка — вклад в себя."}</p></div><div class="rhythm-score"><strong>${count}<span>/${daily.length}</span></strong><small>на сегодня</small></div></div>
+      <div class="rhythm-track"><i></i></div>
+    </section>
+    ${groups.filter((g) => g.habits.length).map((g) => `<section class="habit-group"><div class="section-head"><h2>${g.title}</h2><span>Ежедневно</span></div><div class="card routine-card">${g.habits.map(row).join("")}</div></section>`).join("")}
+    ${weekly.map((h) => {
+      const target = h.weeklyTarget || 3;
+      const total = L.weeklyHabitCount(s.days, h.id, currentDay);
+      const dates = L.weekDates(currentDay);
+      return `<section class="card weekly-card"><div class="weekly-head"><div><div class="eyebrow">Пауза для себя</div><h2>${esc(h.name)}</h2><p>Минимум ${target} ${pluralRu(target, "раз", "раза", "раз")} в неделю</p></div><div class="weekly-score ${total >= target ? "complete" : ""}">${total}<span> / ${target}</span></div></div>
+        <div class="week-days">${dates.map((iso, i) => `<button data-week-habit="${esc(h.id)}" data-week-date="${iso}" class="week-day ${s.days[iso]?.habits?.[h.id] ? "done" : ""} ${iso === currentDay ? "selected" : ""}" aria-label="${esc(h.name)}: ${shortDate(iso)}" aria-pressed="${!!s.days[iso]?.habits?.[h.id]}" ${iso > todayISO() ? "disabled" : ""}><span>${["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][i]}</span><b>${s.days[iso]?.habits?.[h.id] ? ICON.check : L.parseISO(iso).getDate()}</b></button>`).join("")}</div>
+        <div class="weekly-foot">${dayMonth(dates[0])} — ${dayMonth(dates[6])}<span>${total >= target ? "Цель недели выполнена" : `Ещё ${target - total} ${pluralRu(target - total, "практика", "практики", "практик")}`}</span></div>
+      </section>`;
+    }).join("")}`;
+  const toggle = (id, date) => {
+    if (date > todayISO()) return;
+    const st = store.get();
+    const d = getDay(st, date);
+    d.habits[id] = !d.habits[id];
+    saveState(st);
+    renderHabits();
+    if (calendarOpen) { document.getElementById("day-calendar-layer").innerHTML = calendarHtml(st, currentDay); wireDayCalendar(); }
+    if (date === todayISO() && daily.length && daily.every((h) => d.habits[h.id]) && d.habits[id] && daily.some((h) => h.id === id)) celebrate();
+  };
+  screens.today.querySelectorAll("[data-habit]").forEach((btn) => btn.addEventListener("click", () => toggle(btn.dataset.habit, currentDay)));
+  screens.today.querySelectorAll("[data-week-habit]").forEach((btn) => btn.addEventListener("click", () => toggle(btn.dataset.weekHabit, btn.dataset.weekDate)));
 }
 
 function renderNote() {
@@ -2028,7 +2042,7 @@ function renderChallenges() {
   }
   const s = store.get();
   const month = new Date().getMonth() + 1;
-  const mine = ensureChallenges(s);
+  const mine = ensureChallenges(s).filter((ch) => !ch.archivedByRoutine);
   const active = mine.filter((ch) => challengeDisplayStatus(ch, todayISO()) === "active");
   const archived = mine.filter((ch) => challengeDisplayStatus(ch, todayISO()) !== "active").slice(0, 4);
   const trending = CHALLENGE_TEMPLATES.filter((template) => (template.trend || []).includes(month));
@@ -2037,7 +2051,7 @@ function renderChallenges() {
     <h1>Челленджи</h1>
     <section class="challenge-section">
       <div class="section-head"><div class="title">Активные</div></div>
-      ${active.length ? `<div class="challenge-stack">${active.map((ch) => challengeCardHtml(ch)).join("")}</div>` : `<div class="card empty-challenge">Нет активных челленджей</div>`}
+      ${active.length ? `<div class="challenge-stack">${active.map((ch) => challengeCardHtml(ch)).join("")}</div>` : `<div class="card empty-challenge"><b>Место для нового старта</b><p>Ежедневный режим уже на главной. Новый челлендж можно создать со своими правилами.</p></div>`}
     </section>
     <section class="card join-room-card">
       <div class="section-head"><div class="title">Код друга</div></div>
@@ -2092,7 +2106,7 @@ function wireChallengeList() {
   const joinBtn = screens.challenges.querySelector("#join-room-btn");
   if (joinBtn) joinBtn.addEventListener("click", async () => {
     const code = screens.challenges.querySelector("#join-room-code").value.trim().toUpperCase();
-    if (!code) return;
+    if (!code) { notify("Введи код друга", "warn"); return; }
     if (!syncCfg.apiUrl) {
       notify("Открой приложение с домена, где доступен /trackerapi", "error");
       return;
@@ -2449,7 +2463,7 @@ function habitHeatmapHtml(state, dates) {
         })
         .join("");
       return `<div class="heat-row">
-        <div class="heat-name"><span>${esc(h.name)}</span><b>${doneCount}/${dates.length}</b></div>
+        <div class="heat-name"><span>${esc(h.name)}</span><b>${h.frequency === "weekly" ? `${doneCount} практик · ${h.weeklyTarget || 3}/нед` : `${doneCount}/${dates.length}`}</b></div>
         <div class="heat-cells" style="--heat-count:${dates.length}">${cells}</div>
       </div>`;
     })
@@ -2457,14 +2471,14 @@ function habitHeatmapHtml(state, dates) {
   return `<section class="card stat-card habit-stat">
     <div class="stat-card-head">
       <div class="title">Привычки</div>
-      <div class="stat-pill" style="--pill-color:var(--green)">heatmap</div>
+      <div class="stat-pill" style="--pill-color:var(--green)">Отметки</div>
     </div>
     <div class="habit-heatmap">${rows}</div>
   </section>`;
 }
 
 function challengeStatsHtml(state) {
-  const challenges = ensureChallenges(state);
+  const challenges = ensureChallenges(state).filter((ch) => !ch.archivedByRoutine);
   if (!challenges.length) return "";
   const today = todayISO();
   const completed = challenges.filter((ch) => challengeDisplayStatus(ch, today) === "done").length;
@@ -2733,6 +2747,8 @@ function renderSettings() {
       <button class="btn ghost" id="add-habit">Добавить привычку</button></div>
     <div class="card"><div class="eyebrow">Замеры веса</div><div id="weigh-list"></div>
       <button class="btn ghost" id="add-weigh">Добавить замер</button></div>
+    <div class="card"><div class="eyebrow">Резервная копия</div><p class="settings-help">Сохрани историю в файл или восстанови её из бэкапа.</p><div class="settings-actions"><button class="btn ghost" id="export">Экспорт</button><button class="btn ghost" id="import">Импорт</button></div><input type="file" id="import-file" accept="application/json,.json" hidden></div>
+    <div class="card"><div class="eyebrow">Синхронизация</div><p class="settings-help">Статус: <span id="sync-status">${syncStatusLabel()}</span></p><label class="onboard-field">Адрес API<input id="sync-url" type="url" placeholder="https://example.com/trackerapi" value="${esc(syncCfg.apiUrl || "")}"></label><label class="onboard-field">Ключ доступа<input id="sync-token" type="password" autocomplete="off" value="${esc(syncCfg.token || "")}"></label><div class="settings-actions"><button class="btn" id="sync-save">Подключить</button><button class="btn ghost" id="sync-now">Синхронизировать</button></div></div>
     <div class="app-version">Версия ${APP_VERSION}</div>
   `;
   wireSettings();
@@ -2751,10 +2767,12 @@ function wireSettings() {
       .filter((c) => c.name && c.startDate);
     s.settings.noAlcoholStart = (s.settings.counters.find((c) => c.id === "no-alcohol") || {}).startDate || s.settings.noAlcoholStart;
     s.settings.noSpraysStart = (s.settings.counters.find((c) => c.id === "no-sprays") || {}).startDate || s.settings.noSpraysStart;
-    s.settings.weighIn.anchorDate = document.getElementById("set-w-anchor").value;
-    s.settings.weighIn.intervalDays = parseInt(document.getElementById("set-w-int").value, 10);
+    const anchor = document.getElementById("set-w-anchor").value;
+    const interval = Number(document.getElementById("set-w-int").value);
+    if (!anchor || !Number.isInteger(interval) || interval < 1 || interval > 365) { notify("Укажи дату и интервал от 1 до 365 дней", "warn"); return; }
+    s.settings.weighIn = { anchorDate: anchor, intervalDays: interval };
     saveState(s);
-    alert("Сохранено");
+    notify("Настройки сохранены");
   });
   document.getElementById("add-counter").addEventListener("click", () => {
     const s = store.get();
@@ -2801,17 +2819,20 @@ function wireSettings() {
 
   const syncSave = document.getElementById("sync-save");
   if (syncSave) syncSave.addEventListener("click", async () => {
-    syncCfg = {
-      apiUrl: document.getElementById("sync-url").value.trim(),
-      token: document.getElementById("sync-token").value.trim(),
-    };
+    const apiUrl = document.getElementById("sync-url").value.trim().replace(/\/$/, "");
+    const token = document.getElementById("sync-token").value.trim();
+    if (!/^https?:\/\//.test(apiUrl) || !token) { notify("Укажи полный адрес API и ключ доступа", "warn"); return; }
+    syncCfg = { apiUrl, token };
     Sync.saveSyncConfig(window.localStorage, syncCfg);
     await pullOnStart();
-    renderSettings();
+    show("settings");
+    notify(syncStatus === "ok" ? "Синхронизация подключена" : "Не удалось подключиться. Проверь адрес и ключ", syncStatus === "ok" ? "ok" : "error");
   });
   const syncNow = document.getElementById("sync-now");
   if (syncNow) syncNow.addEventListener("click", async () => {
+    if (!Sync.isConfigured(syncCfg)) { notify("Сначала подключи синхронизацию", "warn"); return; }
     await pushNow();
+    notify(syncStatus === "ok" ? "Данные синхронизированы" : "Нет связи с сервером", syncStatus === "ok" ? "ok" : "error");
     renderSettings();
   });
 }
@@ -2821,11 +2842,12 @@ function renderEditableList(containerId, key, addBtnId) {
   document.getElementById(containerId).innerHTML = s[key]
     .map(
       (item, i) => `<div class="edit-row">
-        <input data-key="${key}" data-i="${i}" value="${esc(item.name)}" />
-        <button class="icon-x" data-del="${key}" data-i="${i}">${ICON.x}</button></div>`
+        <input data-key="${key}" data-i="${i}" value="${esc(item.name)}" aria-label="Название" />
+        ${key === "habits" ? `<select data-frequency="${i}" aria-label="Частота привычки"><option value="daily" ${item.frequency !== "weekly" ? "selected" : ""}>Каждый день</option><option value="weekly" ${item.frequency === "weekly" ? "selected" : ""}>За неделю</option></select>${item.frequency === "weekly" ? `<input class="weekly-target-input" type="number" min="1" max="7" data-weekly-target="${i}" value="${item.weeklyTarget || 3}" aria-label="Цель за неделю">` : ""}` : ""}
+        <button class="icon-x" aria-label="Удалить" data-del="${key}" data-i="${i}">${ICON.x}</button></div>`
     )
     .join("");
-  document.querySelectorAll(`#${containerId} input`).forEach((inp) =>
+  document.querySelectorAll(`#${containerId} input[data-key]`).forEach((inp) =>
     inp.addEventListener("change", () => {
       const st = store.get();
       const nextName = inp.dataset.key === "exercises" ? cleanExerciseName(inp.value) : inp.value.trim();
@@ -2843,6 +2865,12 @@ function renderEditableList(containerId, key, addBtnId) {
       renderSettings();
     })
   );
+  document.querySelectorAll(`#${containerId} [data-frequency], #${containerId} [data-weekly-target]`).forEach((inp) => inp.addEventListener("change", () => {
+    const st = store.get();
+    if (inp.dataset.frequency != null) { const h = st.habits[+inp.dataset.frequency]; h.frequency = inp.value; h.weeklyTarget ||= 3; }
+    else { const value = Number(inp.value); if (!Number.isInteger(value) || value < 1 || value > 7) { notify("Цель: от 1 до 7 дней в неделю", "warn"); return; } st.habits[+inp.dataset.weeklyTarget].weeklyTarget = value; }
+    saveState(st); renderSettings();
+  }));
   document.getElementById(addBtnId).addEventListener("click", () => {
     const name = prompt("Название?");
     if (!name) return;
@@ -2854,7 +2882,7 @@ function renderEditableList(containerId, key, addBtnId) {
     } else {
       const cleanName = name.trim();
       if (!cleanName) return;
-      st.habits.push({ id: normalizeId(cleanName, st[key]), name: cleanName });
+      st.habits.push({ id: normalizeId(cleanName, st[key]), name: cleanName, frequency: "daily" });
     }
     saveState(st);
     renderSettings();
@@ -2903,7 +2931,8 @@ function exportData() {
   a.href = url;
   a.download = "tracker-backup-" + todayISO() + ".json";
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  notify("Бэкап подготовлен");
 }
 
 function importData(e) {
@@ -2913,14 +2942,17 @@ function importData(e) {
   reader.onload = () => {
     try {
       store.importJSON(reader.result);
-      alert("Импортировано");
+      schedulePush();
+      notify("История восстановлена");
       currentDay = todayISO();
       show("today");
     } catch (err) {
       alert("Не удалось импортировать: " + err.message);
     }
   };
+  reader.onerror = () => notify("Не удалось прочитать файл", "error");
   reader.readAsText(file);
+  e.target.value = "";
 }
 
 // ---------- Старт ----------

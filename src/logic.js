@@ -141,6 +141,28 @@ export function habitStreak(days, habitId, refISO) {
   return streak;
 }
 
+// Неделя начинается в понедельник. Будущие отметки не учитываем.
+export function weekDates(refISO) {
+  const offset = (parseISO(refISO).getDay() + 6) % 7;
+  const monday = addDays(refISO, -offset);
+  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+}
+
+export function weeklyHabitCount(days, habitId, refISO, limitISO = toISO(new Date())) {
+  return weekDates(refISO).filter((iso) => iso <= limitISO && !!days[iso]?.habits?.[habitId]).length;
+}
+
+export function routineHabits() {
+  return [
+    { id: "pushups", name: "30 отжиманий", frequency: "daily", category: "body" },
+    { id: "abs", name: "50 пресса", frequency: "daily", category: "body" },
+    { id: "chess", name: "Шахматы", frequency: "daily", category: "mind" },
+    { id: "fr", name: "Французский", frequency: "daily", category: "mind" },
+    { id: "reading", name: "Чтение", frequency: "daily", category: "mind" },
+    { id: "meditation", name: "Медитация", frequency: "weekly", weeklyTarget: 3, category: "calm" },
+  ];
+}
+
 // --- Агрегация для статистики ---
 
 export function repsPerDay(days, exerciseName) {
@@ -208,13 +230,15 @@ export function defaultState() {
   return {
     settings: {
       counters: [],
+      routineVersion: 1,
+      routineStartedAt: today,
       profile: { name: "", height: null, weight: null, photo: "", measurements: {} },
       challenge: { anchorDate: today, remainingAtAnchor: 75, startDate: today, targetDays: 75, enabled: false, photoUrl: "" },
       weighIn: { anchorDate: today, intervalDays: 14 },
     },
     challenges: [],
     exercises: [],
-    habits: [],
+    habits: routineHabits(),
     weighIns: [],
     measurements: [],
     days: {},

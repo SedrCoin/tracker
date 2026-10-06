@@ -22,6 +22,9 @@ import {
   dayNutritionTotals,
   lastMeasurementValue,
   defaultState,
+  routineHabits,
+  weekDates,
+  weeklyHabitCount,
 } from "../src/logic.js";
 import { createStore } from "../src/storage.js";
 import { chooseNewer, createSyncClient } from "../src/sync.js";
@@ -248,7 +251,7 @@ test("дефолтный стейт — чистый новый аккаунт",
   assert.equal(s.settings.challenge.enabled, false);
   assert.equal(s.settings.challenge.remainingAtAnchor, 75);
   assert.equal(s.settings.weighIn.intervalDays, 14);
-  assert.deepEqual(s.habits, []);
+  assert.deepEqual(s.habits, routineHabits());
   assert.deepEqual(s.exercises, []);
   assert.deepEqual(s.weighIns, []);
   assert.deepEqual(s.measurements, []);
@@ -325,7 +328,7 @@ function oldPersonalStarterState(profileName = "Друг") {
 test("createStore сидит дефолт при пустом хранилище", () => {
   const store = createStore(memStorage());
   assert.equal(store.get().settings.challenge.enabled, false);
-  assert.deepEqual(store.get().habits, []);
+  assert.deepEqual(store.get().habits, routineHabits());
 });
 
 test("save/get сохраняет изменения", () => {
@@ -380,7 +383,7 @@ test("get() очищает старый персональный сид у но�
   const s = store.get();
   assert.deepEqual(s.settings.counters, []);
   assert.equal(s.settings.challenge.enabled, false);
-  assert.deepEqual(s.habits, []);
+  assert.deepEqual(s.habits, routineHabits());
   assert.deepEqual(s.exercises, []);
   assert.deepEqual(s.weighIns, []);
   assert.deepEqual(s.days, {});
@@ -393,8 +396,8 @@ test("get() не очищает старый персональный сид у 
   const store = createStore(ls);
   const s = store.get();
   assert.equal(s.settings.counters.length, 2);
-  assert.equal(s.settings.challenge.enabled, true);
-  assert.equal(s.habits.length, 4);
+  assert.equal(s.settings.challenge.enabled, false);
+  assert.equal(s.habits.length, 6);
   assert.equal(s.exercises.length, 2);
   assert.equal(s.weighIns[0].weight, 78.8);
 });
@@ -475,4 +478,85 @@ test("createSyncClient.push шлёт PUT с телом", async () => {
   assert.deepEqual(out, { updatedAt: 9 });
   assert.equal(captured.opts.method, "PUT");
   assert.deepEqual(JSON.parse(captured.opts.body), { state: { a: 2 }, updatedAt: 9 });
+});
+
+test("неделя медитации: понедельник–воскресенье, включая границу года", () => {
+  assert.deepEqual(weekDates("2027-01-03"), ["2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-03"]);
+  const days = {
+    "2026-12-27": { habits: { meditation: true } },
+    "2026-12-28": { habits: { meditation: true } },
+    "2026-12-30": { habits: { meditation: true } },
+    "2027-01-03": { habits: { meditation: true } },
+  };
+  assert.equal(weeklyHabitCount(days, "meditation", "2026-12-30", "2026-12-30"), 2);
+  assert.equal(weeklyHabitCount(days, "meditation", "2027-01-03", "2027-01-03"), 3);
+  delete days["2026-12-30"].habits.meditation;
+  assert.equal(weeklyHabitCount(days, "meditation", "2027-01-03", "2027-01-03"), 2);
+});
+
+test("новый режим сохраняет историю и ID, архивирует 75 и применяется один раз", () => {
+  const ls = memStorage();
+  const legacy = oldPersonalStarterState("Артём");
+  legacy.habits.push({ id: "book-custom", name: "Чтение" });
+  legacy.days["2026-06-25"].habits["book-custom"] = true;
+  const oldDays = structuredClone(legacy.days);
+  legacy.challenges = [{ id: "my75", templateId: "75-hard", name: "75 Hard", status: "active", checks: { "2026-06-25": true } }];
+  ls.setItem("tracker.state.v2", JSON.stringify(legacy));
+  const store = createStore(ls);
+  const migrated = store.get();
+  assert.deepEqual(migrated.days, oldDays);
+  assert.equal(migrated.habits.find((h) => h.id === "pushups").name, "30 отжиманий");
+  assert.equal(migrated.habits.find((h) => h.id === "meditation").weeklyTarget, 3);
+  assert.equal(migrated.habits.filter((h) => h.name === "Чтение").length, 1);
+  assert.equal(migrated.habits.find((h) => h.name === "Чтение").id, "book-custom");
+  assert.equal(migrated.challenges[0].status, "stopped");
+  assert.equal(migrated.challenges[0].archivedByRoutine, true);
+  assert.deepEqual(migrated.challenges[0].checks, { "2026-06-25": true });
+  migrated.habits = migrated.habits.filter((h) => h.id !== "abs");
+  store.set(migrated);
+  assert.ok(!store.get().habits.some((h) => h.id === "abs"));
+});
+
+test("новый режим применяется к импорту и старой облачной копии", () => {
+  const legacy = oldPersonalStarterState("Артём");
+  const store = createStore(memStorage());
+  store.importJSON(JSON.stringify(legacy));
+  assert.equal(store.get().settings.routineVersion, 1);
+  assert.equal(store.get().habits.length, 6);
+  assert.equal(store.applyRemote(structuredClone(legacy), 123), true);
+  assert.equal(store.get().habits.length, 6);
+  assert.equal(store.applyRemote(store.get(), 124), false);
+});
+
+test("личные счётчики Артёма восстановлены: 374 и 157 дней на 6 октября", () => {
+  const ls = memStorage();
+  const state = defaultState();
+  state.settings.profile.name = "Артём";
+  ls.setItem("tracker.state.v2", JSON.stringify(state));
+  const store = createStore(ls);
+  const counters = store.get().settings.counters;
+  assert.equal(counters.length, 2);
+  assert.equal(daysSince(counters.find((c) => c.id === "no-alcohol").startDate, "2026-10-06"), 374);
+  assert.equal(daysSince(counters.find((c) => c.id === "no-sprays").startDate, "2026-10-06"), 157);
+  assert.equal(daysSince(counters.find((c) => c.id === "no-sprays").startDate, "2026-10-07"), 158);
+  const edited = store.get();
+  edited.settings.counters[0].startDate = "2026-01-01";
+  store.set(edited);
+  assert.equal(store.get().settings.counters[0].startDate, "2026-01-01");
+  assert.equal(store.get().settings.counters.length, 2);
+});
+
+test("восстановление не дублирует существующие счётчики и не добавляет их другим профилям", () => {
+  const ls = memStorage();
+  const state = defaultState();
+  state.settings.profile.name = "Артём";
+  state.settings.counters = [{ id: "custom-alco", name: "Без алкоголя", startDate: "2025-09-27", tone: "alco" }];
+  ls.setItem("tracker.state.v2", JSON.stringify(state));
+  const store = createStore(ls);
+  assert.equal(store.get().settings.counters.length, 2);
+  assert.equal(store.get().settings.counters[0].id, "custom-alco");
+  const other = defaultState();
+  other.settings.profile.name = "Друг";
+  ls.setItem("tracker.state.v2", JSON.stringify(other));
+  assert.equal(store.get().settings.counters.length, 0);
 });
